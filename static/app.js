@@ -1,36 +1,58 @@
 const state = {
     activeSection: "live",
+
     matches: {
         live: [],
         upcoming: [],
         finished: []
+    },
+
+    search: {
+        active: false,
+        query: "",
+        suggestions: []
     }
 };
 
 
-document.addEventListener("DOMContentLoaded", () => {
-    setupTabs();
-    setupModal();
-    loadMatches();
+document.addEventListener(
+    "DOMContentLoaded",
+    () => {
+        setupTabs();
+        setupSearch();
+        loadMatches();
 
-    // Refresh browser data every 60 seconds.
-    setInterval(loadMatches, 60 * 1000);
-});
+        // Refresh the normal match feed every 60 seconds.
+        setInterval(
+            loadMatches,
+            60 * 1000
+        );
+    }
+);
 
+
+/* =========================
+   TABS
+   ========================= */
 
 function setupTabs() {
-    const tabs = document.querySelectorAll(".tab");
+    const tabs =
+        document.querySelectorAll(".tab");
 
     tabs.forEach((tab) => {
-        tab.addEventListener("click", () => {
-            const section = tab.dataset.section;
+        tab.addEventListener(
+            "click",
+            () => {
+                const section =
+                    tab.dataset.section;
 
-            if (!section) {
-                return;
+                if (!section) {
+                    return;
+                }
+
+                switchSection(section);
             }
-
-            switchSection(section);
-        });
+        );
     });
 }
 
@@ -38,52 +60,489 @@ function setupTabs() {
 function switchSection(section) {
     state.activeSection = section;
 
-    document.querySelectorAll(".tab").forEach((tab) => {
-        tab.classList.toggle(
-            "active",
-            tab.dataset.section === section
-        );
-    });
+    document
+        .querySelectorAll(".tab")
+        .forEach((tab) => {
+            tab.classList.toggle(
+                "active",
+                tab.dataset.section === section
+            );
+        });
 
-    document.querySelectorAll(".match-section").forEach((element) => {
-        const isActive =
-            element.id === `${section}Section`;
-
-        element.classList.toggle(
-            "active-section",
-            isActive
-        );
-    });
+    document
+        .querySelectorAll(".match-section")
+        .forEach((element) => {
+            element.classList.toggle(
+                "active-section",
+                element.id === `${section}Section`
+            );
+        });
 }
 
 
-function setupModal() {
-    document.querySelectorAll("[data-close-modal]").forEach((element) => {
-        element.addEventListener("click", closeModal);
-    });
+/* =========================
+   SEARCH SETUP
+   ========================= */
 
-    document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape") {
-            closeModal();
-        }
-    });
-}
+function setupSearch() {
+    const input =
+        document.getElementById("matchSearch");
+
+    const clearButton =
+        document.getElementById("clearSearch");
+
+    const closeButton =
+        document.getElementById("closeSearch");
+
+    if (!input) {
+        return;
+    }
 
 
-async function loadMatches() {
-    setConnection("loading");
+    let timer = null;
 
-    try {
-        const response = await fetch(
-            "/api/matches",
-            {
-                method: "GET",
-                headers: {
-                    "Accept": "application/json"
+
+    input.addEventListener(
+        "input",
+        () => {
+            const query =
+                input.value.trim();
+
+            updateClearButton(
+                query
+            );
+
+            clearTimeout(timer);
+
+            timer = setTimeout(
+                () => {
+                    handleSearchInput(
+                        query
+                    );
                 },
-                cache: "no-store"
+                150
+            );
+        }
+    );
+
+
+    input.addEventListener(
+        "keydown",
+        (event) => {
+
+            if (
+                event.key === "Enter"
+            ) {
+                event.preventDefault();
+
+                const query =
+                    input.value.trim();
+
+                if (query) {
+                    performSearch(query);
+                }
+
+                return;
+            }
+
+
+            if (
+                event.key === "Escape"
+            ) {
+                hideSuggestions();
+                return;
+            }
+        }
+    );
+
+
+    input.addEventListener(
+        "focus",
+        () => {
+            const query =
+                input.value.trim();
+
+            if (query) {
+                handleSearchInput(
+                    query
+                );
+            }
+        }
+    );
+
+
+    if (clearButton) {
+        clearButton.addEventListener(
+            "click",
+            () => {
+                clearSearch();
             }
         );
+    }
+
+
+    if (closeButton) {
+        closeButton.addEventListener(
+            "click",
+            () => {
+                clearSearch();
+            }
+        );
+    }
+
+
+    document.addEventListener(
+        "click",
+        (event) => {
+
+            const searchSection =
+                document.querySelector(
+                    ".search-section"
+                );
+
+            if (!searchSection) {
+                return;
+            }
+
+            if (
+                !searchSection.contains(
+                    event.target
+                )
+            ) {
+                hideSuggestions();
+            }
+        }
+    );
+}
+
+
+/* =========================
+   SEARCH INPUT
+   ========================= */
+
+async function handleSearchInput(query) {
+    if (!query) {
+        hideSuggestions();
+        return;
+    }
+
+    await loadSearchData(
+        query,
+        false
+    );
+}
+
+
+async function performSearch(query) {
+    if (!query) {
+        return;
+    }
+
+    hideSuggestions();
+
+    await loadSearchData(
+        query,
+        true
+    );
+}
+
+
+/* =========================
+   SEARCH API
+   ========================= */
+
+async function loadSearchData(
+    query,
+    showResults
+) {
+    try {
+        const response =
+            await fetch(
+                `/api/search?q=${encodeURIComponent(query)}`,
+                {
+                    method: "GET",
+                    headers: {
+                        "Accept":
+                            "application/json"
+                    },
+                    cache: "no-store"
+                }
+            );
+
+
+        if (!response.ok) {
+            throw new Error(
+                `Search request failed: ${response.status}`
+            );
+        }
+
+
+        const data =
+            await response.json();
+
+
+        if (!data.ok) {
+            throw new Error(
+                data.error ||
+                "Search failed"
+            );
+        }
+
+
+        state.search.query =
+            query;
+
+        state.search.suggestions =
+            Array.isArray(
+                data.suggestions
+            )
+                ? data.suggestions
+                : [];
+
+
+        if (
+            document.activeElement ===
+            document.getElementById(
+                "matchSearch"
+            )
+        ) {
+            renderSuggestions(
+                state.search.suggestions
+            );
+        }
+
+
+        if (showResults) {
+            renderSearchResults(
+                data
+            );
+        }
+
+    } catch (error) {
+        console.error(
+            "Search error:",
+            error
+        );
+
+
+        if (showResults) {
+            renderSearchError(
+                "Unable to search matches right now."
+            );
+        }
+    }
+}
+
+
+/* =========================
+   SUGGESTIONS
+   ========================= */
+
+function renderSuggestions(
+    suggestions
+) {
+    const container =
+        document.getElementById(
+            "suggestions"
+        );
+
+    if (!container) {
+        return;
+    }
+
+
+    if (
+        !Array.isArray(
+            suggestions
+        ) ||
+        suggestions.length === 0
+    ) {
+        hideSuggestions();
+        return;
+    }
+
+
+    container.innerHTML =
+        suggestions
+            .map(
+                (suggestion) => {
+                    const safeValue =
+                        escapeHtml(
+                            suggestion
+                        );
+
+                    const firstLetter =
+                        escapeHtml(
+                            suggestion
+                                .charAt(0)
+                                .toUpperCase()
+                        );
+
+                    return `
+                        <button
+                            type="button"
+                            class="suggestion-item"
+                            data-suggestion="${escapeAttribute(
+                                suggestion
+                            )}"
+                            role="option"
+                        >
+                            <span class="suggestion-type">
+                                ${firstLetter}
+                            </span>
+
+                            <span>
+                                ${safeValue}
+                            </span>
+                        </button>
+                    `;
+                }
+            )
+            .join("");
+
+
+    container.classList.remove(
+        "hidden"
+    );
+
+
+    container
+        .querySelectorAll(
+            ".suggestion-item"
+        )
+        .forEach((button) => {
+
+            button.addEventListener(
+                "click",
+                () => {
+                    const value =
+                        button.dataset
+                            .suggestion;
+
+                    const input =
+                        document.getElementById(
+                            "matchSearch"
+                        );
+
+                    if (input) {
+                        input.value =
+                            value;
+                    }
+
+                    updateClearButton(
+                        value
+                    );
+
+                    performSearch(
+                        value
+                    );
+                }
+            );
+        });
+}
+
+
+function hideSuggestions() {
+    const container =
+        document.getElementById(
+            "suggestions"
+        );
+
+    if (!container) {
+        return;
+    }
+
+    container.classList.add(
+        "hidden"
+    );
+
+    container.innerHTML = "";
+}
+
+
+/* =========================
+   CLEAR SEARCH
+   ========================= */
+
+function clearSearch() {
+    const input =
+        document.getElementById(
+            "matchSearch"
+        );
+
+    if (input) {
+        input.value = "";
+    }
+
+
+    state.search.active =
+        false;
+
+    state.search.query =
+        "";
+
+    state.search.suggestions =
+        [];
+
+
+    updateClearButton("");
+
+    hideSuggestions();
+
+    hideSearchResults();
+
+    showNormalMatches();
+
+    switchSection(
+        state.activeSection ||
+        "live"
+    );
+}
+
+
+function updateClearButton(
+    query
+) {
+    const button =
+        document.getElementById(
+            "clearSearch"
+        );
+
+    if (!button) {
+        return;
+    }
+
+    button.classList.toggle(
+        "hidden",
+        !query
+    );
+}
+
+
+/* =========================
+   LOAD NORMAL MATCHES
+   ========================= */
+
+async function loadMatches() {
+    setConnection(
+        "loading"
+    );
+
+
+    try {
+        const response =
+            await fetch(
+                "/api/matches",
+                {
+                    method: "GET",
+                    headers: {
+                        "Accept":
+                            "application/json"
+                    },
+                    cache: "no-store"
+                }
+            );
+
 
         if (!response.ok) {
             throw new Error(
@@ -91,104 +550,228 @@ async function loadMatches() {
             );
         }
 
-        const data = await response.json();
+
+        const data =
+            await response.json();
+
 
         if (!data.ok) {
             throw new Error(
-                data.error || "Unable to load matches"
+                data.error ||
+                "Unable to load matches"
             );
         }
 
-        state.matches.live = Array.isArray(data.live)
-            ? data.live
-            : [];
 
-        state.matches.upcoming = Array.isArray(data.upcoming)
-            ? data.upcoming
-            : [];
+        state.matches.live =
+            Array.isArray(data.live)
+                ? data.live
+                : [];
 
-        state.matches.finished = Array.isArray(data.finished)
-            ? data.finished
-            : [];
 
-        renderCounts(data.counts || {});
-        renderMatches("live", state.matches.live);
-        renderMatches("upcoming", state.matches.upcoming);
-        renderMatches("finished", state.matches.finished);
+        state.matches.upcoming =
+            Array.isArray(data.upcoming)
+                ? data.upcoming
+                : [];
 
-        updateLastUpdated(data.updated_at);
 
-        renderErrors(data.errors || []);
+        state.matches.finished =
+            Array.isArray(data.finished)
+                ? data.finished
+                : [];
 
-        setConnection("online");
+
+        renderCounts(
+            data.counts || {}
+        );
+
+
+        renderMatches(
+            "live",
+            state.matches.live
+        );
+
+
+        renderMatches(
+            "upcoming",
+            state.matches.upcoming
+        );
+
+
+        renderMatches(
+            "finished",
+            state.matches.finished
+        );
+
+
+        updateLastUpdated(
+            data.updated_at
+        );
+
+
+        renderErrors(
+            data.errors || []
+        );
+
+
+        setConnection(
+            "online"
+        );
 
     } catch (error) {
-        console.error("CrixData API error:", error);
+        console.error(
+            "CrixData API error:",
+            error
+        );
 
-        setConnection("offline");
+
+        setConnection(
+            "offline"
+        );
+
 
         showGlobalError(
             "Unable to load cricket data right now. Please try again."
         );
 
-        renderMatches("live", []);
-        renderMatches("upcoming", []);
-        renderMatches("finished", []);
+
+        renderMatches(
+            "live",
+            []
+        );
+
+
+        renderMatches(
+            "upcoming",
+            []
+        );
+
+
+        renderMatches(
+            "finished",
+            []
+        );
     }
 }
 
 
-function setConnection(status) {
-    const dot = document.getElementById("connectionDot");
-    const text = document.getElementById("connectionText");
+/* =========================
+   CONNECTION
+   ========================= */
+
+function setConnection(
+    status
+) {
+    const dot =
+        document.getElementById(
+            "connectionDot"
+        );
+
+    const text =
+        document.getElementById(
+            "connectionText"
+        );
+
 
     if (!dot || !text) {
         return;
     }
+
 
     dot.classList.remove(
         "online",
         "offline"
     );
 
-    if (status === "online") {
-        dot.classList.add("online");
-        text.textContent = "Live connection";
+
+    if (
+        status === "online"
+    ) {
+        dot.classList.add(
+            "online"
+        );
+
+        text.textContent =
+            "Live connection";
+
         return;
     }
 
-    if (status === "offline") {
-        dot.classList.add("offline");
-        text.textContent = "Connection error";
+
+    if (
+        status === "offline"
+    ) {
+        dot.classList.add(
+            "offline"
+        );
+
+        text.textContent =
+            "Connection error";
+
         return;
     }
 
-    text.textContent = "Updating...";
+
+    text.textContent =
+        "Updating...";
 }
 
 
-function renderCounts(counts) {
-    document.getElementById("liveCount").textContent =
-        safeNumber(counts.live);
+/* =========================
+   NORMAL COUNTS
+   ========================= */
 
-    document.getElementById("upcomingCount").textContent =
-        safeNumber(counts.upcoming);
+function renderCounts(
+    counts
+) {
+    document.getElementById(
+        "liveCount"
+    ).textContent =
+        safeNumber(
+            counts.live
+        );
 
-    document.getElementById("finishedCount").textContent =
-        safeNumber(counts.finished);
+
+    document.getElementById(
+        "upcomingCount"
+    ).textContent =
+        safeNumber(
+            counts.upcoming
+        );
+
+
+    document.getElementById(
+        "finishedCount"
+    ).textContent =
+        safeNumber(
+            counts.finished
+        );
 }
 
 
-function renderMatches(section, matches) {
-    const container = document.getElementById(
-        `${section}Matches`
-    );
+/* =========================
+   NORMAL MATCH RENDER
+   ========================= */
+
+function renderMatches(
+    section,
+    matches
+) {
+    const container =
+        document.getElementById(
+            `${section}Matches`
+        );
+
 
     if (!container) {
         return;
     }
 
-    if (!matches.length) {
+
+    if (
+        !Array.isArray(matches) ||
+        matches.length === 0
+    ) {
         container.innerHTML = `
             <div class="empty-state">
                 ${emptyMessage(section)}
@@ -198,83 +781,93 @@ function renderMatches(section, matches) {
         return;
     }
 
-    container.innerHTML = matches
-        .map((match) => createMatchCard(match, section))
-        .join("");
 
-    container.querySelectorAll(".details-button").forEach((button) => {
-        button.addEventListener("click", () => {
-            const matchId = button.dataset.matchId;
-
-            if (matchId) {
-                openDetails(matchId);
-            }
-        });
-    });
+    container.innerHTML =
+        matches
+            .map(
+                (match) =>
+                    createMatchCard(
+                        match,
+                        section
+                    )
+            )
+            .join("");
 }
 
 
-function emptyMessage(section) {
-    if (section === "live") {
-        return "No live matches right now.";
-    }
+/* =========================
+   MATCH CARD
+   ========================= */
 
-    if (section === "upcoming") {
-        return "No upcoming matches available.";
-    }
+function createMatchCard(
+    match,
+    section
+) {
+    const team1 =
+        escapeHtml(
+            match.team1 ||
+            "Team 1"
+        );
 
-    return "No finished matches available.";
-}
+
+    const team2 =
+        escapeHtml(
+            match.team2 ||
+            "Team 2"
+        );
 
 
-function createMatchCard(match, section) {
-    const team1 = escapeHtml(
-        match.team1 || "Team 1"
-    );
+    const score1 =
+        escapeHtml(
+            match.team1_score ||
+            ""
+        );
 
-    const team2 = escapeHtml(
-        match.team2 || "Team 2"
-    );
 
-    const score1 = escapeHtml(
-        match.team1_score || ""
-    );
+    const score2 =
+        escapeHtml(
+            match.team2_score ||
+            ""
+        );
 
-    const score2 = escapeHtml(
-        match.team2_score || ""
-    );
 
-    const competition = escapeHtml(
-        match.competition || "Cricket"
-    );
+    const competition =
+        escapeHtml(
+            match.competition ||
+            "Cricket"
+        );
 
-    const venue = escapeHtml(
-        match.venue || ""
-    );
 
-    const statusText = escapeHtml(
-        match.status_text || displayStatus(match.status, section)
-    );
+    const venue =
+        escapeHtml(
+            match.venue ||
+            "Venue not available"
+        );
+
+
+    const statusText =
+        escapeHtml(
+            match.status_text ||
+            displayStatus(
+                match.status,
+                section
+            )
+        );
+
 
     const statusClass =
-        `status-${safeStatus(match.status, section)}`;
+        `status-${safeStatus(
+            match.status,
+            section
+        )}`;
 
-    const timeText = formatMatchTime(
-        match.start_time,
-        section
-    );
 
-    const detailsButton = match.details_url || match.provider
-        ? `
-            <button
-                type="button"
-                class="details-button"
-                data-match-id="${escapeAttribute(match.id || "")}"
-            >
-                Details
-            </button>
-        `
-        : "";
+    const timeText =
+        formatMatchTime(
+            match.start_time,
+            section
+        );
+
 
     return `
         <article class="match-card">
@@ -285,7 +878,9 @@ function createMatchCard(match, section) {
                     ${competition}
                 </div>
 
-                <span class="status-badge ${statusClass}">
+                <span
+                    class="status-badge ${statusClass}"
+                >
                     ${statusText}
                 </span>
 
@@ -295,6 +890,7 @@ function createMatchCard(match, section) {
             <div class="teams">
 
                 <div class="team-row">
+
                     <div class="team-name">
                         ${team1}
                     </div>
@@ -302,6 +898,7 @@ function createMatchCard(match, section) {
                     <div class="team-score">
                         ${score1}
                     </div>
+
                 </div>
 
 
@@ -311,6 +908,7 @@ function createMatchCard(match, section) {
 
 
                 <div class="team-row">
+
                     <div class="team-name">
                         ${team2}
                     </div>
@@ -318,6 +916,7 @@ function createMatchCard(match, section) {
                     <div class="team-score">
                         ${score2}
                     </div>
+
                 </div>
 
             </div>
@@ -325,11 +924,19 @@ function createMatchCard(match, section) {
 
             <div class="match-footer">
 
-                <div class="match-meta">
-                    ${timeText || venue || "Match information"}
+                <div class="match-time">
+                    ${timeText}
                 </div>
 
-                ${detailsButton}
+                <div class="venue">
+                    <span class="venue-icon">
+                        📍
+                    </span>
+
+                    <span>
+                        ${venue}
+                    </span>
+                </div>
 
             </div>
 
@@ -338,8 +945,303 @@ function createMatchCard(match, section) {
 }
 
 
-function safeStatus(status, section) {
-    const value = String(status || section).toLowerCase();
+/* =========================
+   SEARCH RESULTS
+   ========================= */
+
+function renderSearchResults(
+    data
+) {
+    state.search.active =
+        true;
+
+
+    hideNormalMatches();
+
+
+    const section =
+        document.getElementById(
+            "searchSection"
+        );
+
+    const results =
+        document.getElementById(
+            "searchResults"
+        );
+
+    const summary =
+        document.getElementById(
+            "searchSummary"
+        );
+
+
+    if (
+        !section ||
+        !results ||
+        !summary
+    ) {
+        return;
+    }
+
+
+    section.classList.remove(
+        "hidden"
+    );
+
+
+    const upcoming =
+        Array.isArray(
+            data.upcoming
+        )
+            ? data.upcoming
+            : [];
+
+
+    const finished =
+        Array.isArray(
+            data.finished
+        )
+            ? data.finished
+            : [];
+
+
+    const total =
+        safeNumber(
+            data?.counts?.total
+        );
+
+
+    summary.textContent =
+        `${total} match${total === 1 ? "" : "es"} found for "${data.query}"`;
+
+
+    let html = "";
+
+
+    if (upcoming.length > 0) {
+
+        html += `
+            <div class="search-result-group">
+
+                <div class="search-result-title">
+
+                    Upcoming
+
+                    <span class="search-result-count">
+                        ${upcoming.length}
+                    </span>
+
+                </div>
+
+                <div class="match-grid">
+                    ${upcoming
+                        .map(
+                            (match) =>
+                                createMatchCard(
+                                    match,
+                                    "upcoming"
+                                )
+                        )
+                        .join("")}
+                </div>
+
+            </div>
+        `;
+    }
+
+
+    if (finished.length > 0) {
+
+        html += `
+            <div class="search-result-group">
+
+                <div class="search-result-title">
+
+                    Finished
+
+                    <span class="search-result-count">
+                        ${finished.length}
+                    </span>
+
+                </div>
+
+                <div class="match-grid">
+                    ${finished
+                        .map(
+                            (match) =>
+                                createMatchCard(
+                                    match,
+                                    "finished"
+                                )
+                        )
+                        .join("")}
+                </div>
+
+            </div>
+        `;
+    }
+
+
+    if (!html) {
+        html = `
+            <div class="empty-state">
+                No upcoming or finished matches found for
+                "${escapeHtml(data.query || "")}".
+            </div>
+        `;
+    }
+
+
+    results.innerHTML =
+        html;
+}
+
+
+function renderSearchError(
+    message
+) {
+    const section =
+        document.getElementById(
+            "searchSection"
+        );
+
+    const results =
+        document.getElementById(
+            "searchResults"
+        );
+
+
+    hideNormalMatches();
+
+
+    if (!section || !results) {
+        return;
+    }
+
+
+    section.classList.remove(
+        "hidden"
+    );
+
+
+    results.innerHTML = `
+        <div class="empty-state">
+            ${escapeHtml(message)}
+        </div>
+    `;
+}
+
+
+/* =========================
+   SHOW / HIDE NORMAL FEED
+   ========================= */
+
+function hideNormalMatches() {
+    const tabs =
+        document.getElementById(
+            "matchTabs"
+        );
+
+
+    if (tabs) {
+        tabs.classList.add(
+            "hidden"
+        );
+    }
+
+
+    document
+        .querySelectorAll(
+            ".match-section"
+        )
+        .forEach(
+            (section) => {
+                section.classList.add(
+                    "hidden"
+                );
+            }
+        );
+}
+
+
+function showNormalMatches() {
+    const tabs =
+        document.getElementById(
+            "matchTabs"
+        );
+
+
+    if (tabs) {
+        tabs.classList.remove(
+            "hidden"
+        );
+    }
+
+
+    document
+        .querySelectorAll(
+            ".match-section"
+        )
+        .forEach(
+            (section) => {
+                section.classList.remove(
+                    "hidden"
+                );
+            }
+        );
+}
+
+
+function hideSearchResults() {
+    const section =
+        document.getElementById(
+            "searchSection"
+        );
+
+    const results =
+        document.getElementById(
+            "searchResults"
+        );
+
+    const summary =
+        document.getElementById(
+            "searchSummary"
+        );
+
+
+    if (section) {
+        section.classList.add(
+            "hidden"
+        );
+    }
+
+
+    if (results) {
+        results.innerHTML = "";
+    }
+
+
+    if (summary) {
+        summary.textContent = "";
+    }
+}
+
+
+/* =========================
+   STATUS
+   ========================= */
+
+function safeStatus(
+    status,
+    section
+) {
+    const value =
+        String(
+            status ||
+            section ||
+            ""
+        ).toLowerCase();
+
 
     if (
         value === "live" ||
@@ -349,112 +1251,220 @@ function safeStatus(status, section) {
         return value;
     }
 
+
     return section;
 }
 
 
-function displayStatus(status, section) {
-    const value = safeStatus(status, section);
+function displayStatus(
+    status,
+    section
+) {
+    const value =
+        safeStatus(
+            status,
+            section
+        );
+
 
     if (value === "live") {
         return "LIVE";
     }
 
+
     if (value === "finished") {
         return "FINISHED";
     }
+
 
     return "UPCOMING";
 }
 
 
-function formatMatchTime(value, section) {
+/* =========================
+   TIME
+   ========================= */
+
+function formatMatchTime(
+    value,
+    section
+) {
     if (!value) {
         return "";
     }
 
-    const date = new Date(value);
 
-    if (Number.isNaN(date.getTime())) {
-        return escapeHtml(String(value));
+    const date =
+        new Date(value);
+
+
+    if (
+        Number.isNaN(
+            date.getTime()
+        )
+    ) {
+        return escapeHtml(
+            String(value)
+        );
     }
 
-    try {
-        const formatted = new Intl.DateTimeFormat(
-            undefined,
-            {
-                day: "2-digit",
-                month: "short",
-                hour: "2-digit",
-                minute: "2-digit"
-            }
-        ).format(date);
 
-        if (section === "live") {
+    try {
+
+        const formatted =
+            new Intl.DateTimeFormat(
+                undefined,
+                {
+                    day: "2-digit",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit"
+                }
+            ).format(date);
+
+
+        if (
+            section === "live"
+        ) {
             return `Started ${formatted}`;
         }
 
-        if (section === "finished") {
+
+        if (
+            section === "finished"
+        ) {
             return formatted;
         }
+
 
         return formatted;
 
     } catch (error) {
-        return escapeHtml(String(value));
+        return escapeHtml(
+            String(value)
+        );
     }
 }
 
 
-function updateLastUpdated(value) {
-    const element = document.getElementById("updatedAt");
+/* =========================
+   UPDATED TIME
+   ========================= */
+
+function updateLastUpdated(
+    value
+) {
+    const element =
+        document.getElementById(
+            "updatedAt"
+        );
+
 
     if (!element) {
         return;
     }
+
 
     if (!value) {
         element.textContent = "—";
         return;
     }
 
-    const date = new Date(value);
 
-    if (Number.isNaN(date.getTime())) {
-        element.textContent = "Just now";
+    const date =
+        new Date(value);
+
+
+    if (
+        Number.isNaN(
+            date.getTime()
+        )
+    ) {
+        element.textContent =
+            "Just now";
+
         return;
     }
 
+
     try {
-        element.textContent = new Intl.DateTimeFormat(
-            undefined,
-            {
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit"
-            }
-        ).format(date);
+
+        element.textContent =
+            new Intl.DateTimeFormat(
+                undefined,
+                {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit"
+                }
+            ).format(date);
 
     } catch (error) {
-        element.textContent = "Just now";
+
+        element.textContent =
+            "Just now";
     }
 }
 
 
-function renderErrors(errors) {
-    if (!Array.isArray(errors) || errors.length === 0) {
+/* =========================
+   EMPTY STATE
+   ========================= */
+
+function emptyMessage(
+    section
+) {
+    if (
+        section === "live"
+    ) {
+        return "No live matches right now.";
+    }
+
+
+    if (
+        section === "upcoming"
+    ) {
+        return "No upcoming matches available.";
+    }
+
+
+    return "No finished matches available.";
+}
+
+
+/* =========================
+   ERRORS
+   ========================= */
+
+function renderErrors(
+    errors
+) {
+    if (
+        !Array.isArray(errors) ||
+        errors.length === 0
+    ) {
         hideGlobalError();
         return;
     }
 
-    const messages = errors
-        .map((item) => {
-            const provider = item?.provider || "Provider";
-            const error = item?.error || "Unknown error";
 
-            return `${provider}: ${error}`;
-        })
-        .join(" | ");
+    const messages =
+        errors
+            .map(
+                (item) => {
+                    const provider =
+                        item?.provider ||
+                        "Provider";
+
+                    const error =
+                        item?.error ||
+                        "Unknown error";
+
+                    return `${provider}: ${error}`;
+                }
+            )
+            .join(" | ");
+
 
     showGlobalError(
         `Some cricket data sources could not be reached. ${messages}`
@@ -462,246 +1472,98 @@ function renderErrors(errors) {
 }
 
 
-function showGlobalError(message) {
-    const element = document.getElementById("globalError");
+function showGlobalError(
+    message
+) {
+    const element =
+        document.getElementById(
+            "globalError"
+        );
+
 
     if (!element) {
         return;
     }
 
-    element.textContent = message;
-    element.classList.remove("hidden");
+
+    element.textContent =
+        message;
+
+    element.classList.remove(
+        "hidden"
+    );
 }
 
 
 function hideGlobalError() {
-    const element = document.getElementById("globalError");
+    const element =
+        document.getElementById(
+            "globalError"
+        );
+
 
     if (!element) {
         return;
     }
 
+
     element.textContent = "";
-    element.classList.add("hidden");
-}
 
-
-async function openDetails(matchId) {
-    const modal = document.getElementById("detailsModal");
-    const content = document.getElementById("detailsContent");
-
-    if (!modal || !content) {
-        return;
-    }
-
-    modal.classList.remove("hidden");
-
-    content.innerHTML = `
-        <div class="loading">
-            Loading match details...
-        </div>
-    `;
-
-    try {
-        const response = await fetch(
-            `/api/matches/${encodeURIComponent(matchId)}/details`,
-            {
-                method: "GET",
-                headers: {
-                    "Accept": "application/json"
-                },
-                cache: "no-store"
-            }
-        );
-
-        if (!response.ok) {
-            throw new Error(
-                `Server returned ${response.status}`
-            );
-        }
-
-        const data = await response.json();
-
-        if (!data.ok) {
-            throw new Error(
-                data.error || "Unable to load details"
-            );
-        }
-
-        content.innerHTML = createDetailsView(
-            data.details || {},
-            matchId
-        );
-
-    } catch (error) {
-        console.error("Details error:", error);
-
-        content.innerHTML = `
-            <div class="empty-state">
-                Unable to load match details.
-            </div>
-        `;
-    }
-}
-
-
-function createDetailsView(details, matchId) {
-    const safeId = escapeHtml(matchId);
-
-    const values = flattenDetails(
-        details,
-        0,
-        "",
-        []
+    element.classList.add(
+        "hidden"
     );
-
-    const rows = values.length
-        ? values.slice(0, 40).map((item) => `
-            <div class="detail-item">
-
-                <div class="detail-label">
-                    ${escapeHtml(item.key)}
-                </div>
-
-                <div class="detail-value">
-                    ${escapeHtml(item.value)}
-                </div>
-
-            </div>
-        `).join("")
-        : `
-            <div class="empty-state">
-                No additional details available.
-            </div>
-        `;
-
-    return `
-        <h3 class="details-title">
-            Match Details
-        </h3>
-
-        <div
-            class="detail-item"
-            style="margin-bottom: 12px;"
-        >
-            <div class="detail-label">
-                Match ID
-            </div>
-
-            <div class="detail-value">
-                ${safeId}
-            </div>
-        </div>
-
-        <div class="details-grid">
-            ${rows}
-        </div>
-    `;
 }
 
 
-function flattenDetails(
-    value,
-    depth,
-    prefix,
-    output
+/* =========================
+   HELPERS
+   ========================= */
+
+function safeNumber(
+    value
 ) {
-    if (depth > 3) {
-        return output;
-    }
+    const number =
+        Number(value);
 
-    if (
-        value === null ||
-        value === undefined
-    ) {
-        return output;
-    }
-
-    if (Array.isArray(value)) {
-        value.forEach((item, index) => {
-            flattenDetails(
-                item,
-                depth + 1,
-                prefix
-                    ? `${prefix}.${index + 1}`
-                    : `${index + 1}`,
-                output
-            );
-        });
-
-        return output;
-    }
-
-    if (
-        typeof value === "object"
-    ) {
-        Object.entries(value).forEach(
-            ([key, item]) => {
-                const nextPrefix = prefix
-                    ? `${prefix}.${key}`
-                    : key;
-
-                if (
-                    item !== null &&
-                    typeof item === "object"
-                ) {
-                    flattenDetails(
-                        item,
-                        depth + 1,
-                        nextPrefix,
-                        output
-                    );
-                } else {
-                    output.push({
-                        key: nextPrefix,
-                        value: String(item ?? "")
-                    });
-                }
-            }
-        );
-
-        return output;
-    }
-
-    output.push({
-        key: prefix || "value",
-        value: String(value)
-    });
-
-    return output;
-}
-
-
-function closeModal() {
-    const modal = document.getElementById("detailsModal");
-
-    if (!modal) {
-        return;
-    }
-
-    modal.classList.add("hidden");
-}
-
-
-function safeNumber(value) {
-    const number = Number(value);
-
-    return Number.isFinite(number)
+    return Number.isFinite(
+        number
+    )
         ? number
         : 0;
 }
 
 
-function escapeHtml(value) {
+function escapeHtml(
+    value
+) {
     return String(value)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
+        .replaceAll(
+            "&",
+            "&amp;"
+        )
+        .replaceAll(
+            "<",
+            "&lt;"
+        )
+        .replaceAll(
+            ">",
+            "&gt;"
+        )
+        .replaceAll(
+            '"',
+            "&quot;"
+        )
+        .replaceAll(
+            "'",
+            "&#039;"
+        );
 }
 
 
-function escapeAttribute(value) {
-    return escapeHtml(value);
+function escapeAttribute(
+    value
+) {
+    return escapeHtml(
+        value
+    );
 }
