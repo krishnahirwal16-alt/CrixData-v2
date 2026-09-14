@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CrixData - Live Scores</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #0f172a; color: #fff; margin: 0; padding: 20px; }
+        h1 { text-align: center; color: #38bdf8; }
+        .section-title { color: #facc15; border-bottom: 2px solid #334155; padding-bottom: 5px; margin-top: 30px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; margin-top: 15px; }
+        .card { background: #1e293b; padding: 15px; border-radius: 8px; border-left: 4px solid #38bdf8; }
+        .live { border-left-color: #ef4444; }
+        .team { font-weight: bold; font-size: 1.1em; display: flex; justify-content: space-between; margin: 5px 0; }
+        .status { font-size: 0.85em; color: #94a3b8; margin-top: 8px; }
+        .badge { background: #334155; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>🏏 CrixData Live Portal</h1>
+
+    <h2 class="section-title">🔴 Live Matches</h2>
+    <div class="grid">
+        {% for m in matches.live %}
+        <div class="card live">
+            <span class="badge">{{ m.format }}</span>
+            <div class="team"><span>{{ m.t1 }}</span> <span>{{ m.t1_score }}</span></div>
+            <div class="team"><span>{{ m.t2 }}</span> <span>{{ m.t2_score }}</span></div>
+            <div class="status">{{ m.status }} | {{ m.venue }}</div>
+        </div>
+        {% else %}
+        <p>No live matches right now.</p>
+        {% endfor %}
+    </div>
+
+    <h2 class="section-title">📅 Upcoming Matches</h2>
+    <div class="grid">
+        {% for m in matches.upcoming %}
+        <div class="card">
+            <span class="badge">{{ m.format }}</span>
+            <div class="team"><span>{{ m.t1 }}</span></div>
+            <div class="team"><span>{{ m.t2 }}</span></div>
+            <div class="status">{{ m.date }} | {{ m.venue }}</div>
+        </div>
+        {% else %}
+        <p>No upcoming matches listed.</p>
+        {% endfor %}
+    </div>
+
+    <h2 class="section-title">✅ Finished Matches</h2>
+    <div class="grid">
+        {% for m in matches.finished %}
+        <div class="card">
+            <span class="badge">{{ m.format }}</span>
+            <div class="team"><span>{{ m.t1 }}</span> <span>{{ m.t1_score }}</span></div>
+            <div class="team"><span>{{ m.t2 }}</span> <span>{{ m.t2_score }}</span></div>
+            <div class="status">{{ m.status }}</div>
+        </div>
+        {% else %}
+        <p>No recent finished matches.</p>
+        {% endfor %}
+    </div>
+</body>
+</html>
