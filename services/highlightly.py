@@ -585,3 +585,240 @@ class HighlightlyProvider(CricketProvider):
             or item.get("venueName")
             or item.get("ground")
         )
+
+
+    def search_matches(
+        self,
+        query: str,
+    ) -> List[Match]:
+
+        if not self.config.highlightly_api_key:
+            return []
+
+        query = text(query).strip()
+
+        if not query:
+            return []
+
+        headers = {
+            "x-rapidapi-key": self.config.highlightly_api_key,
+        }
+
+        results: List[Match] = []
+
+        # ---------------------------------------------
+        # 1. Search as league name
+        # ---------------------------------------------
+
+        try:
+            data = http_get_json(
+                f"{self.base_url}/matches",
+                headers=headers,
+                params={
+                    "leagueName": query,
+                    "timezone": self.config.timezone,
+                    "limit": 100,
+                    "offset": 0,
+                },
+            )
+
+            for item in self._extract_matches(data):
+                match = self._normalize_match(item)
+
+                if match:
+                    results.append(match)
+
+        except Exception:
+            pass
+
+
+        # ---------------------------------------------
+        # 2. Search as home team
+        # ---------------------------------------------
+
+        try:
+            data = http_get_json(
+                f"{self.base_url}/matches",
+                headers=headers,
+                params={
+                    "homeTeamName": query,
+                    "timezone": self.config.timezone,
+                    "limit": 100,
+                    "offset": 0,
+                },
+            )
+
+            for item in self._extract_matches(data):
+                match = self._normalize_match(item)
+
+                if match:
+                    results.append(match)
+
+        except Exception:
+            pass
+
+
+        # ---------------------------------------------
+        # 3. Search as away team
+        # ---------------------------------------------
+
+        try:
+            data = http_get_json(
+                f"{self.base_url}/matches",
+                headers=headers,
+                params={
+                    "awayTeamName": query,
+                    "timezone": self.config.timezone,
+                    "limit": 100,
+                    "offset": 0,
+                },
+            )
+
+            for item in self._extract_matches(data):
+                match = self._normalize_match(item)
+
+                if match:
+                    results.append(match)
+
+        except Exception:
+            pass
+
+
+        # ---------------------------------------------
+        # 4. Search country / international name
+        # ---------------------------------------------
+
+        try:
+            data = http_get_json(
+                f"{self.base_url}/matches",
+                headers=headers,
+                params={
+                    "countryName": query,
+                    "timezone": self.config.timezone,
+                    "limit": 100,
+                    "offset": 0,
+                },
+            )
+
+            for item in self._extract_matches(data):
+                match = self._normalize_match(item)
+
+                if match:
+                    results.append(match)
+
+        except Exception:
+            pass
+
+
+        # ---------------------------------------------
+        # Remove duplicates
+        # ---------------------------------------------
+
+        unique: Dict[str, Match] = {}
+
+        for match in results:
+            key = self._search_key(match)
+
+            if key not in unique:
+                unique[key] = match
+                continue
+
+            unique[key] = self._merge_search_match(
+                unique[key],
+                match,
+            )
+
+        return list(unique.values())
+
+
+    def _search_key(
+        self,
+        match: Match,
+    ) -> str:
+
+        team1 = lower(
+            match.team1
+        )
+
+        team2 = lower(
+            match.team2
+        )
+
+        start_time = text(
+            match.start_time
+        )
+
+        return "|".join(
+            sorted(
+                [
+                    team1,
+                    team2,
+                ]
+            )
+            + [start_time]
+        )
+
+
+    def _merge_search_match(
+        self,
+        first: Match,
+        second: Match,
+    ) -> Match:
+
+        if not first.competition:
+            first.competition = (
+                second.competition
+            )
+
+        if not first.match_type:
+            first.match_type = (
+                second.match_type
+            )
+
+        if not first.team1_score:
+            first.team1_score = (
+                second.team1_score
+            )
+
+        if not first.team2_score:
+            first.team2_score = (
+                second.team2_score
+            )
+
+        if not first.status_text:
+            first.status_text = (
+                second.status_text
+            )
+
+        if not first.start_time:
+            first.start_time = (
+                second.start_time
+            )
+
+        if not first.venue:
+            first.venue = (
+                second.venue
+            )
+
+        first.provider_ids = list(
+            dict.fromkeys(
+                first.provider_ids
+                + second.provider_ids
+            )
+        )
+
+        statuses = {
+            first.status,
+            second.status,
+        }
+
+        if "live" in statuses:
+            first.status = "live"
+
+        elif "finished" in statuses:
+            first.status = "finished"
+
+        else:
+            first.status = "upcoming"
+
+        return first
