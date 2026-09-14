@@ -1,68 +1,58 @@
 import json
 import urllib.request
+import xml.etree.ElementTree as ET
 from flask import Flask, render_template
 
 app = Flask(__name__)
 
-def fetch_data(url):
+def fetch_rss_matches():
+    url = "https://static.cricinfo.com/rss/livescores.xml"
+    matches = {'live': [], 'upcoming': [], 'finished': []}
+    
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=10) as response:
-            return json.loads(response.read().decode('utf-8'))
+            xml_data = response.read()
+            root = ET.fromstring(xml_data)
+            
+            for item in root.findall('.//item'):
+                title = item.find('title').text if item.find('title') is not None else ''
+                description = item.find('description').text if item.find('description') is not None else ''
+                
+                # Parsing team scores and status from title/description
+                parts = title.split('v')
+                t1 = parts[0].strip() if len(parts) > 0 else 'Team A'
+                t2 = parts[1].strip() if len(parts) > 1 else 'Team B'
+                
+                match_info = {
+                    'title': title,
+                    't1': t1,
+                    't2': t2,
+                    'status': description if description else 'Match status updating...',
+                    'venue': 'International / Domestic Venue'
+                }
+                
+                # Simple categorization logic
+                title_lower = title.lower()
+                desc_lower = description.lower()
+                
+                if 'won' in title_lower or 'won' in desc_lower or 'drawn' in title_lower:
+                    matches['finished'].append(match_info)
+                elif 'match over' in desc_lower or 'result' in desc_lower:
+                    matches['finished'].append(match_info)
+                elif 'match starts' in desc_lower or 'opt' in desc_lower or 'yet to' in desc_lower:
+                    matches['upcoming'].append(match_info)
+                else:
+                    matches['live'].append(match_info)
+                    
     except Exception as e:
-        print(f"Fetch Error for {url}: {e}")
-        return None
+        print(f"RSS Fetch Error: {e}")
+        
+    return matches
 
 @app.route('/')
 def home():
-    matches = {'live': [], 'upcoming': [], 'finished': []}
-    
-    # Primary & Secondary APIs to avoid 404
-    urls = [
-        "https://site.api.espn.com/apis/site/v2/sports/cricket/13840/scoreboard", # International Cricket
-        "https://site.web.api.espn.com/apis/site/v2/sports/cricket/scoreboard"
-    ]
-    
-    data = None
-    for url in urls:
-        res = fetch_data(url)
-        if res and 'events' in res:
-            data = res
-            break
-            
-    if data:
-        for evt in data.get('events', []):
-            comp = evt.get('competitions', [{}])[0]
-            competitors = comp.get('competitors', [])
-            
-            t1_name = competitors[0].get('team', {}).get('shortDisplayName', competitors[0].get('team', {}).get('displayName', 'TBD')) if len(competitors) > 0 else 'TBD'
-            t1_score = competitors[0].get('score', '') if len(competitors) > 0 else ''
-            
-            t2_name = competitors[1].get('team', {}).get('shortDisplayName', competitors[1].get('team', {}).get('displayName', 'TBD')) if len(competitors) > 1 else 'TBD'
-            t2_score = competitors[1].get('score', '') if len(competitors) > 1 else ''
-            
-            status_type = comp.get('status', {}).get('type', {})
-            state = status_type.get('state', 'pre')
-            status_desc = status_type.get('detail', status_type.get('shortDetail', 'Scheduled'))
-            
-            venue = comp.get('venue', {}).get('fullName', 'Stadium N/A')
-            
-            match_data = {
-                'title': evt.get('name', f"{t1_name} vs {t2_name}"),
-                't1': t1_name, 't1_score': t1_score if t1_score else 'Yet to bat',
-                't2': t2_name, 't2_score': t2_score if t2_score else 'Yet to bat',
-                'status': status_desc,
-                'venue': venue,
-                'date': evt.get('date', '')[:10]
-            }
-            
-            if state == 'in':
-                matches['live'].append(match_data)
-            elif state == 'post':
-                matches['finished'].append(match_data)
-            else:
-                matches['upcoming'].append(match_data)
-
+    matches = fetch_rss_matches()
     return render_template('index.html', matches=matches)
 
 if __name__ == '__main__':
