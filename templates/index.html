@@ -3,616 +3,133 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CrixData</title>
 
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
-        rel="stylesheet"
-    >
+    <title>CrixData — Cricket Live Scores</title>
 
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: 'Inter', sans-serif;
-        }
-
-        body {
-            background: #0b0e14;
-            color: #e2e8f0;
-            padding-bottom: 50px;
-        }
-
-        .navbar {
-            background: #161b22;
-            border-bottom: 1px solid #21262d;
-            padding: 15px 5%;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .brand {
-            font-size: 26px;
-            font-weight: 800;
-            color: #38bdf8;
-            letter-spacing: -0.5px;
-        }
-
-        .refresh-btn {
-            border: 1px solid #30363d;
-            background: #0d1117;
-            color: #c9d1d9;
-            border-radius: 8px;
-            padding: 8px 12px;
-            cursor: pointer;
-            font-weight: 600;
-        }
-
-        .refresh-btn:hover {
-            border-color: #38bdf8;
-            color: #38bdf8;
-        }
-
-        .container {
-            max-width: 900px;
-            margin: 25px auto;
-            padding: 0 15px;
-        }
-
-        .tabs {
-            display: flex;
-            gap: 10px;
-            border-bottom: 2px solid #21262d;
-            margin-bottom: 20px;
-        }
-
-        .tab-btn {
-            background: none;
-            border: none;
-            color: #8b949e;
-            padding: 12px 24px;
-            font-size: 15px;
-            font-weight: 700;
-            cursor: pointer;
-            border-bottom: 3px solid transparent;
-        }
-
-        .tab-btn.active {
-            color: #38bdf8;
-            border-bottom-color: #38bdf8;
-        }
-
-        .tab-btn.live-tab.active {
-            color: #ef4444;
-            border-bottom-color: #ef4444;
-        }
-
-        .section {
-            display: none;
-            flex-direction: column;
-            gap: 16px;
-        }
-
-        .section.active {
-            display: flex;
-        }
-
-        .card {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 12px;
-            padding: 18px 22px;
-        }
-
-        .card-meta {
-            display: flex;
-            justify-content: space-between;
-            gap: 12px;
-            font-size: 12px;
-            color: #38bdf8;
-            font-weight: 600;
-            margin-bottom: 10px;
-            text-transform: uppercase;
-        }
-
-        .match-teams {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            margin: 12px 0;
-        }
-
-        .team-row {
-            display: flex;
-            justify-content: space-between;
-            gap: 18px;
-            font-size: 16px;
-            font-weight: 700;
-            color: #f0f6fc;
-        }
-
-        .team-name {
-            min-width: 0;
-            overflow-wrap: anywhere;
-        }
-
-        .score {
-            color: #38bdf8;
-            text-align: right;
-            white-space: nowrap;
-        }
-
-        .team-info {
-            display: block;
-            color: #8b949e;
-            font-size: 11px;
-            font-weight: 500;
-            margin-top: 3px;
-        }
-
-        .status-box {
-            font-size: 13px;
-            font-weight: 700;
-            margin-top: 10px;
-            line-height: 1.4;
-        }
-
-        .info-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-            background: #0d1117;
-            padding: 10px 14px;
-            border-radius: 8px;
-            font-size: 12px;
-            color: #8b949e;
-            margin-top: 10px;
-        }
-
-        .info-item span {
-            color: #c9d1d9;
-            font-weight: 600;
-        }
-
-        .empty-msg {
-            background: #161b22;
-            padding: 30px;
-            text-align: center;
-            border-radius: 10px;
-            color: #8b949e;
-            border: 1px dashed #30363d;
-        }
-
-        .error-box {
-            background: #2a1212;
-            border: 1px solid #713333;
-            color: #fca5a5;
-            padding: 12px 14px;
-            border-radius: 8px;
-            font-size: 12px;
-            margin-bottom: 15px;
-        }
-
-        .meta-box {
-            text-align: center;
-            color: #687386;
-            font-size: 11px;
-            margin-top: 18px;
-            line-height: 1.5;
-        }
-
-        @media (max-width: 600px) {
-            .tabs {
-                gap: 2px;
-            }
-
-            .tab-btn {
-                padding: 12px 9px;
-                font-size: 13px;
-            }
-
-            .info-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .navbar {
-                padding: 14px 15px;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 
 <body>
 
-<nav class="navbar">
-    <div class="brand">CrixData</div>
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-logo">CD</div>
 
-    <button class="refresh-btn" onclick="manualRefresh()">
-        ↻ Refresh
-    </button>
-</nav>
-
-<div class="container">
-
-    {% if matches.errors %}
-    <div class="error-box">
-        <strong>Provider notice:</strong>
-        <ul style="margin: 6px 0 0 18px;">
-            {% for error in matches.errors %}
-            <li>{{ error }}</li>
-            {% endfor %}
-        </ul>
-    </div>
-    {% endif %}
-
-    <div class="tabs">
-
-        <button
-            class="tab-btn live-tab active"
-            data-tab="live"
-            onclick="switchTab('live')"
-        >
-            🔴 LIVE ({{ matches.live|length }})
-        </button>
-
-        <button
-            class="tab-btn"
-            data-tab="upcoming"
-            onclick="switchTab('upcoming')"
-        >
-            📅 UPCOMING ({{ matches.upcoming|length }})
-        </button>
-
-        <button
-            class="tab-btn"
-            data-tab="finished"
-            onclick="switchTab('finished')"
-        >
-            ✅ FINISHED ({{ matches.finished|length }})
-        </button>
-
-    </div>
-
-    <!-- LIVE -->
-    <div id="live" class="section active">
-
-        {% for m in matches.live %}
-
-        <div class="card" style="border-left: 4px solid #ef4444;">
-
-            <div class="card-meta">
-                <span>
-                    {{ m.competition }}
-                    {% if m.match_type %} · {{ m.match_type }}{% endif %}
-                </span>
-                <span>LIVE</span>
+            <div>
+                <h1>CrixData</h1>
+                <p>Global Cricket Scores</p>
             </div>
-            <div style="font-size:10px;color:#687386;margin-top:-4px;">
-                Source: {{ m.provider }}
+        </div>
+
+        <div class="connection">
+            <span id="connectionDot" class="connection-dot"></span>
+            <span id="connectionText">Loading...</span>
+        </div>
+    </header>
+
+
+    <main class="container">
+
+        <section class="page-intro">
+            <div>
+                <h2>Cricket Matches</h2>
+                <p>Live, upcoming and finished matches in one place.</p>
             </div>
 
-            <div class="match-teams">
-
-                <div class="team-row">
-                    <div class="team-name">
-                        {{ m.t1 }}
-                        {% if m.t1_info %}
-                        <span class="team-info">{{ m.t1_info }}</span>
-                        {% endif %}
-                    </div>
-
-                    <span class="score">
-                        {{ m.t1_score }}
-                    </span>
-                </div>
-
-                <div class="team-row">
-                    <div class="team-name">
-                        {{ m.t2 }}
-                        {% if m.t2_info %}
-                        <span class="team-info">{{ m.t2_info }}</span>
-                        {% endif %}
-                    </div>
-
-                    <span class="score">
-                        {{ m.t2_score }}
-                    </span>
-                </div>
-
+            <div class="last-updated">
+                Updated:
+                <span id="updatedAt">—</span>
             </div>
+        </section>
 
-            <div class="status-box" style="color: #ef4444;">
-                {{ m.status }}
-            </div>
 
-            <div class="info-grid">
-                <div class="info-item">
-                    Venue: <span id="venue-{{ loop.index }}">{{ m.venue }}</span>
-                </div>
-
-                <div class="info-item">
-                    Time: <span>{{ m.ist_time }}</span>
-                </div>
-            </div>
-
-            {% if m.provider == "Highlightly" %}
-            <button
-                class="refresh-btn"
-                style="margin-top:10px;"
-                onclick="loadDetails('{{ m.id.split('::')[-1] }}', 'venue-{{ loop.index }}', this)"
-            >
-                View exact venue/details
+        <nav class="tabs" aria-label="Match status">
+            <button class="tab active" data-section="live">
+                LIVE
+                <span id="liveCount" class="count">0</span>
             </button>
-            {% endif %}
 
-        </div>
-
-        {% else %}
-
-        <div class="empty-msg">
-            No live matches in the current provider feeds.
-        </div>
-
-        {% endfor %}
-
-    </div>
-
-    <!-- UPCOMING -->
-    <div id="upcoming" class="section">
-
-        {% for m in matches.upcoming %}
-
-        <div class="card" style="border-left: 4px solid #38bdf8;">
-
-            <div class="card-meta">
-                <span>
-                    {{ m.competition }}
-                    {% if m.match_type %} · {{ m.match_type }}{% endif %}
-                </span>
-                <span>UPCOMING</span>
-            </div>
-            <div style="font-size:10px;color:#687386;margin-top:-4px;">
-                Source: {{ m.provider }}
-            </div>
-
-            <div class="match-teams">
-
-                <div class="team-row">
-                    <span class="team-name">{{ m.t1 }}</span>
-                </div>
-
-                <div class="team-row">
-                    <span class="team-name">{{ m.t2 }}</span>
-                </div>
-
-            </div>
-
-            <div class="status-box" style="color: #38bdf8;">
-                {{ m.status }}
-            </div>
-
-            <div class="info-grid">
-
-                <div class="info-item">
-                    Date & Day: <span>{{ m.day }}</span>
-                </div>
-
-                <div class="info-item">
-                    IST Time: <span>{{ m.ist_time }}</span>
-                </div>
-
-                <div
-                    class="info-item"
-                    style="grid-column: span 2;"
-                >
-                    Venue: <span id="upcoming-venue-{{ loop.index }}">{{ m.venue }}</span>
-                </div>
-
-            </div>
-
-            {% if m.provider == "Highlightly" %}
-            <button
-                class="refresh-btn"
-                style="margin-top:10px;"
-                onclick="loadDetails('{{ m.id.split('::')[-1] }}', 'upcoming-venue-{{ loop.index }}', this)"
-            >
-                View exact venue/details
+            <button class="tab" data-section="upcoming">
+                UPCOMING
+                <span id="upcomingCount" class="count">0</span>
             </button>
-            {% endif %}
 
-        </div>
-
-        {% else %}
-
-        <div class="empty-msg">
-            No upcoming matches in the current provider feeds.
-        </div>
-
-        {% endfor %}
-
-    </div>
-
-    <!-- FINISHED -->
-    <div id="finished" class="section">
-
-        {% for m in matches.finished %}
-
-        <div class="card" style="border-left: 4px solid #22c55e;">
-
-            <div class="card-meta">
-                <span>
-                    {{ m.competition }}
-                    {% if m.match_type %} · {{ m.match_type }}{% endif %}
-                </span>
-                <span>RESULT</span>
-            </div>
-            <div style="font-size:10px;color:#687386;margin-top:-4px;">
-                Source: {{ m.provider }}
-            </div>
-
-            <div class="match-teams">
-
-                <div class="team-row">
-                    <div class="team-name">
-                        {{ m.t1 }}
-                        {% if m.t1_info %}
-                        <span class="team-info">{{ m.t1_info }}</span>
-                        {% endif %}
-                    </div>
-
-                    <span class="score">
-                        {{ m.t1_score }}
-                    </span>
-                </div>
-
-                <div class="team-row">
-                    <div class="team-name">
-                        {{ m.t2 }}
-                        {% if m.t2_info %}
-                        <span class="team-info">{{ m.t2_info }}</span>
-                        {% endif %}
-                    </div>
-
-                    <span class="score">
-                        {{ m.t2_score }}
-                    </span>
-                </div>
-
-            </div>
-
-            <div class="status-box" style="color: #22c55e;">
-                {{ m.status }}
-            </div>
-
-            <div class="info-grid">
-
-                <div class="info-item">
-                    Date: <span>{{ m.day }}</span>
-                </div>
-
-                <div class="info-item">
-                    Venue: <span id="finished-venue-{{ loop.index }}">{{ m.venue }}</span>
-                </div>
-
-            </div>
-
-            {% if m.provider == "Highlightly" %}
-            <button
-                class="refresh-btn"
-                style="margin-top:10px;"
-                onclick="loadDetails('{{ m.id.split('::')[-1] }}', 'finished-venue-{{ loop.index }}', this)"
-            >
-                View exact venue/details
+            <button class="tab" data-section="finished">
+                FINISHED
+                <span id="finishedCount" class="count">0</span>
             </button>
-            {% endif %}
+        </nav>
+
+
+        <section id="liveSection" class="match-section active-section">
+            <div class="section-heading">
+                <h3>Live Matches</h3>
+                <span class="section-status">LIVE NOW</span>
+            </div>
+
+            <div id="liveMatches" class="match-grid">
+                <div class="loading">Loading live matches...</div>
+            </div>
+        </section>
+
+
+        <section id="upcomingSection" class="match-section">
+            <div class="section-heading">
+                <h3>Upcoming Matches</h3>
+                <span class="section-status">NEXT MATCHES</span>
+            </div>
+
+            <div id="upcomingMatches" class="match-grid">
+                <div class="loading">Loading upcoming matches...</div>
+            </div>
+        </section>
+
+
+        <section id="finishedSection" class="match-section">
+            <div class="section-heading">
+                <h3>Finished Matches</h3>
+                <span class="section-status">RECENT RESULTS</span>
+            </div>
+
+            <div id="finishedMatches" class="match-grid">
+                <div class="loading">Loading finished matches...</div>
+            </div>
+        </section>
+
+
+        <div id="globalError" class="global-error hidden"></div>
+
+    </main>
+
+
+    <div id="detailsModal" class="modal hidden">
+        <div class="modal-backdrop" data-close-modal></div>
+
+        <div class="modal-card">
+
+            <button
+                type="button"
+                class="modal-close"
+                data-close-modal
+                aria-label="Close"
+            >
+                ×
+            </button>
+
+            <div id="detailsContent">
+                <div class="loading">Loading match details...</div>
+            </div>
 
         </div>
-
-        {% else %}
-
-        <div class="empty-msg">
-            No recent finished matches in the current provider feeds.
-        </div>
-
-        {% endfor %}
-
     </div>
 
-    <div class="meta-box">
-        Highlightly + CricketData · Cached for 30 minutes<br>
-        Major competitions, international, India domestic and other provider-covered cricket are retained.
-        Venue details are loaded on demand to protect the free API quota.
-    </div>
 
-</div>
+    <footer class="footer">
+        <p>CrixData Cricket Score Platform</p>
+    </footer>
 
-<script>
-    function switchTab(tabName) {
-        document.querySelectorAll('.section').forEach((section) => {
-            section.classList.remove('active');
-        });
 
-        document.querySelectorAll('.tab-btn').forEach((button) => {
-            button.classList.remove('active');
-        });
-
-        const section = document.getElementById(tabName);
-        const button = document.querySelector(`[data-tab="${tabName}"]`);
-
-        if (section) {
-            section.classList.add('active');
-        }
-
-        if (button) {
-            button.classList.add('active');
-        }
-
-        sessionStorage.setItem('crixdata_active_tab', tabName);
-    }
-
-    function manualRefresh() {
-        window.location.reload();
-    }
-
-    async function loadDetails(matchId, venueElementId, button) {
-        if (!matchId) {
-            return;
-        }
-
-        button.disabled = true;
-        button.textContent = 'Loading...';
-
-        try {
-            const response = await fetch(
-                `/api/matches/${encodeURIComponent(matchId)}/details`
-            );
-
-            const payload = await response.json();
-
-            if (!response.ok || payload.ok === false) {
-                throw new Error(payload.error || 'Detail request failed');
-            }
-
-            const item = Array.isArray(payload?.data)
-                ? payload.data[0]
-                : (payload?.data || payload);
-
-            const venueObject = item?.venue || item?.stadium || null;
-
-            const venue = (
-                venueObject?.name ||
-                venueObject?.fullName ||
-                venueObject?.stadium ||
-                (typeof venueObject === 'string' ? venueObject : null) ||
-                null
-            );
-
-            const el = document.getElementById(venueElementId);
-
-            if (el && venue) {
-                el.textContent = venue;
-            }
-
-            button.textContent = venue
-                ? 'Venue loaded'
-                : 'No extra venue data';
-        } catch (error) {
-            button.textContent = 'Details unavailable';
-        } finally {
-            button.disabled = false;
-        }
-    }
-
-    document.addEventListener('DOMContentLoaded', () => {
-        const savedTab = sessionStorage.getItem('crixdata_active_tab');
-
-        if (savedTab && document.getElementById(savedTab)) {
-            switchTab(savedTab);
-        }
-    });
-</script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
 
 </body>
 </html>
