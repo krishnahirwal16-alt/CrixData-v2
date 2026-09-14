@@ -7,6 +7,7 @@ from utils import http_get_json, lower, parse_datetime, text
 
 
 class HighlightlyProvider(CricketProvider):
+
     LIVE_STATES = {
         "in play",
         "stumps",
@@ -19,15 +20,14 @@ class HighlightlyProvider(CricketProvider):
 
     FINISHED_STATES = {
         "finished",
-        "abandoned",
         "cancelled",
         "canceled",
-        "no result",
+        "abandoned",
     }
 
     UPCOMING_STATES = {
         "scheduled",
-        "not started",
+        "match delayed",
         "postponed",
     }
 
@@ -84,11 +84,9 @@ class HighlightlyProvider(CricketProvider):
         "vijay hazare",
         "syed mushtaq ali",
         "duleep",
-        "irany",
         "irani",
         "deodhar",
         "maharaja trophy",
-        "maruti suzuki",
         "bengal",
         "mumbai",
         "delhi",
@@ -120,21 +118,26 @@ class HighlightlyProvider(CricketProvider):
         if not self.config.highlightly_api_key:
             return []
 
-        today = datetime.now(timezone.utc).date()
-        dates = [today, today + timedelta(days=1)]
-
         matches: List[Match] = []
 
+        today = datetime.now(timezone.utc).date()
+
+        dates = [
+            today,
+            today + timedelta(days=1),
+        ]
+
+        headers = {
+            "x-rapidapi-key": self.config.highlightly_api_key,
+        }
+
         for match_date in dates:
+
             params = {
                 "date": match_date.isoformat(),
                 "timezone": self.config.timezone,
                 "limit": 100,
                 "offset": 0,
-            }
-
-            headers = {
-                "x-rapidapi-key": self.config.highlightly_api_key,
             }
 
             try:
@@ -147,6 +150,7 @@ class HighlightlyProvider(CricketProvider):
                 continue
 
             for item in self._extract_matches(data):
+
                 match = self._normalize_match(item)
 
                 if match:
@@ -169,6 +173,7 @@ class HighlightlyProvider(CricketProvider):
                 f"{self.base_url}/matches/{provider_id}",
                 headers=headers,
             )
+
         except Exception as exc:
             return {
                 "error": str(exc),
@@ -176,13 +181,22 @@ class HighlightlyProvider(CricketProvider):
             }
 
     def _extract_matches(self, data: Any) -> List[Dict[str, Any]]:
+
         if isinstance(data, list):
             return data
 
         if not isinstance(data, dict):
             return []
 
-        for key in ("data", "matches", "results"):
+        value = data.get("data")
+
+        if isinstance(value, list):
+            return value
+
+        for key in (
+            "matches",
+            "results",
+        ):
             value = data.get(key)
 
             if isinstance(value, list):
@@ -190,7 +204,11 @@ class HighlightlyProvider(CricketProvider):
 
         return []
 
-    def _normalize_match(self, item: Dict[str, Any]) -> Optional[Match]:
+    def _normalize_match(
+        self,
+        item: Dict[str, Any],
+    ) -> Optional[Match]:
+
         if not isinstance(item, dict):
             return None
 
@@ -203,46 +221,71 @@ class HighlightlyProvider(CricketProvider):
         if not provider_id:
             return None
 
-        teams = item.get("teams") or {}
+        team1 = self._team_name(
+            item.get("homeTeam")
+        )
 
-        if isinstance(teams, list):
-            team1 = text(teams[0].get("name")) if len(teams) > 0 and isinstance(teams[0], dict) else text(teams[0]) if len(teams) > 0 else ""
-            team2 = text(teams[1].get("name")) if len(teams) > 1 and isinstance(teams[1], dict) else text(teams[1]) if len(teams) > 1 else ""
-        else:
-            team1 = text(
-                self._first_value(
-                    teams,
-                    "home",
-                    "homeTeam",
-                    "team1",
-                    "1",
-                )
-            )
-            team2 = text(
-                self._first_value(
-                    teams,
-                    "away",
-                    "awayTeam",
-                    "team2",
-                    "2",
-                )
-            )
+        team2 = self._team_name(
+            item.get("awayTeam")
+        )
 
         if not team1:
-            team1 = text(item.get("homeTeam") or item.get("team1"))
+            team1 = text(
+                item.get("homeTeamName")
+                or item.get("team1")
+            )
 
         if not team2:
-            team2 = text(item.get("awayTeam") or item.get("team2"))
+            team2 = text(
+                item.get("awayTeamName")
+                or item.get("team2")
+            )
+
+        if not team1 or not team2:
+            return None
+
+        state = item.get("state")
+
+        if not isinstance(state, dict):
+            state = {}
+
+        state_description = text(
+            state.get("description")
+        )
+
+        state_report = text(
+            state.get("report")
+        )
 
         start_time = self._get_start_time(item)
-        state_text = self._get_state_text(item)
-        status = self._normalize_status(state_text, start_time)
 
-        competition = self._get_competition(item)
-        match_type = self._get_match_type(item)
+        status = self._normalize_status(
+            state_description=state_description,
+            start_time=start_time,
+        )
 
-        score1, score2 = self._get_scores(item)
-        venue = self._get_venue(item)
+        competition = self._get_competition(
+            item
+        )
+
+        match_type = text(
+            item.get("format")
+            or item.get("matchType")
+            or item.get("type")
+        )
+
+        score1, score2 = self._get_scores(
+            state
+        )
+
+        venue = self._get_venue(
+            item
+        )
+
+        status_text = (
+            state_report
+            or state_description
+        )
 
         return Match(
             id=f"highlightly:{provider_id}",
@@ -255,19 +298,26 @@ class HighlightlyProvider(CricketProvider):
             team1_score=score1,
             team2_score=score2,
             status=status,
-            status_text=state_text,
+            status_text=status_text,
             start_time=start_time,
             venue=venue,
-            details_url=f"/api/matches/highlightly:{provider_id}/details",
+            details_url=(
+                f"/api/matches/"
+                f"highlightly:{provider_id}"
+                f"/details"
+            ),
             raw=item,
         )
 
     def _normalize_status(
         self,
-        state_text: str,
+        state_description: str,
         start_time: Optional[str],
     ) -> str:
-        state = lower(state_text)
+
+        state = lower(
+            state_description
+        )
 
         if state in self.LIVE_STATES:
             return "live"
@@ -278,43 +328,85 @@ class HighlightlyProvider(CricketProvider):
         if state in self.UPCOMING_STATES:
             return "upcoming"
 
-        dt = parse_datetime(start_time)
-
-        if dt:
-            now = datetime.now(timezone.utc)
-
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-
-            if dt <= now:
-                return "live"
-
-        return "upcoming"
-
-    def _get_state_text(self, item: Dict[str, Any]) -> str:
-        state = item.get("state")
-
-        if isinstance(state, dict):
-            return text(
-                state.get("description")
-                or state.get("name")
-                or state.get("state")
+        # "No live coverage" does NOT mean live.
+        if state == "no live coverage":
+            return self._status_from_time(
+                start_time
             )
 
-        return text(
-            item.get("status")
-            or item.get("state")
-            or item.get("statusText")
+        # Unknown state should never become
+        # live merely because the start time is old.
+        if state in {
+            "",
+            "unknown",
+        }:
+            return self._status_from_time(
+                start_time
+            )
+
+        return self._status_from_time(
+            start_time
         )
 
-    def _get_start_time(self, item: Dict[str, Any]) -> Optional[str]:
+    def _status_from_time(
+        self,
+        start_time: Optional[str],
+    ) -> str:
+
+        dt = parse_datetime(
+            start_time
+        )
+
+        if dt is None:
+            return "upcoming"
+
+        if dt.tzinfo is None:
+            dt = dt.replace(
+                tzinfo=timezone.utc
+            )
+
+        now = datetime.now(
+            timezone.utc
+        )
+
+        # A future start is definitely upcoming.
+        if dt > now:
+            return "upcoming"
+
+        # IMPORTANT:
+        # Do NOT classify an old match as live.
+        #
+        # If the provider has not told us that the match
+        # is live, treat an old/unknown match as finished.
+        return "finished"
+
+    def _team_name(
+        self,
+        team: Any,
+    ) -> str:
+
+        if isinstance(team, dict):
+            return text(
+                team.get("name")
+                or team.get("displayName")
+                or team.get("shortName")
+                or team.get("abbreviation")
+            )
+
+        return text(team)
+
+    def _get_start_time(
+        self,
+        item: Dict[str, Any],
+    ) -> Optional[str]:
+
         for key in (
+            "date",
             "startTime",
             "start_time",
-            "date",
             "startDate",
-            "start_date",
         ):
+
             value = item.get(key)
 
             if value:
@@ -322,62 +414,88 @@ class HighlightlyProvider(CricketProvider):
 
         return None
 
-    def _get_competition(self, item: Dict[str, Any]) -> str:
+    def _get_competition(
+        self,
+        item: Dict[str, Any],
+    ) -> str:
+
         league = item.get("league")
 
-        candidates = []
+        competition = ""
 
-        if isinstance(league, dict):
-            candidates.extend(
-                [
-                    league.get("name"),
-                    league.get("title"),
-                    league.get("leagueName"),
-                ]
+        if isinstance(
+            league,
+            dict,
+        ):
+            competition = text(
+                league.get("name")
+                or league.get("title")
             )
-        else:
-            candidates.append(league)
 
-        candidates.extend(
-            [
-                item.get("competition"),
-                item.get("tournament"),
-                item.get("series"),
-                item.get("competitionName"),
-            ]
+        if not competition:
+            competition = text(
+                item.get("competition")
+                or item.get("tournament")
+                or item.get("series")
+                or item.get("competitionName")
+            )
+
+        return self._classify_competition(
+            competition,
+            item,
         )
-
-        competition = next(
-            (text(value) for value in candidates if text(value)),
-            "",
-        )
-
-        return self._classify_competition(competition, item)
 
     def _classify_competition(
         self,
         competition: str,
         item: Dict[str, Any],
     ) -> str:
-        comp = lower(competition)
 
-        team_blob = " ".join(
-            [
-                lower(item.get("homeTeam")),
-                lower(item.get("awayTeam")),
-                lower(item.get("team1")),
-                lower(item.get("team2")),
-            ]
+        comp = lower(
+            competition
         )
 
+        team1 = self._team_name(
+            item.get("homeTeam")
+        )
+
+        team2 = self._team_name(
+            item.get("awayTeam")
+        )
+
+        if not team1:
+            team1 = text(
+                item.get("homeTeamName")
+            )
+
+        if not team2:
+            team2 = text(
+                item.get("awayTeamName")
+            )
+
+        team_blob = (
+            f"{lower(team1)} "
+            f"{lower(team2)}"
+        )
+
+        # First: known leagues.
         for league_name in self.KNOWN_LEAGUES:
+
             if league_name in comp:
                 return competition
 
-        if any(marker in team_blob for marker in self.INTERNATIONAL_MARKERS):
+        # Then: clearly international teams.
+        if any(
+            marker in team_blob
+            for marker in self.INTERNATIONAL_MARKERS
+        ):
             return "International Cricket"
 
-        if any(marker in comp for marker in self.INDIA_DOMESTIC_MARKERS):
+        # Then: India domestic.
+        if any(
+            marker in comp
+            for marker in self.INDIA_DOMESTIC_MARKERS
+        ):
             return "India Domestic"
 
         if "international" in comp:
@@ -388,82 +506,82 @@ class HighlightlyProvider(CricketProvider):
 
         return "Other Cricket"
 
-    def _get_match_type(self, item: Dict[str, Any]) -> str:
-        value = (
-            item.get("matchType")
-            or item.get("type")
-            or item.get("format")
+    def _get_scores(
+        self,
+        state: Dict[str, Any],
+    ):
+
+        teams = state.get(
+            "teams"
         )
 
-        return text(value)
+        if not isinstance(
+            teams,
+            dict,
+        ):
+            return "", ""
 
-    def _get_scores(self, item: Dict[str, Any]):
-        scores = item.get("scores")
+        home = teams.get(
+            "home"
+        )
 
-        if not isinstance(scores, list):
-            scores = item.get("score")
+        away = teams.get(
+            "away"
+        )
 
-        score1 = ""
-        score2 = ""
+        score1 = self._team_score(
+            home
+        )
 
-        if isinstance(scores, list):
-            if len(scores) > 0:
-                score1 = self._score_text(scores[0])
-
-            if len(scores) > 1:
-                score2 = self._score_text(scores[1])
-
-        elif isinstance(scores, dict):
-            score1 = self._score_text(scores.get("home"))
-            score2 = self._score_text(scores.get("away"))
+        score2 = self._team_score(
+            away
+        )
 
         return score1, score2
 
-    def _score_text(self, value: Any) -> str:
-        if isinstance(value, dict):
-            runs = text(value.get("runs"))
-            wickets = text(value.get("wickets"))
-            overs = text(value.get("overs"))
+    def _team_score(
+        self,
+        team: Any,
+    ) -> str:
 
-            if runs and wickets and overs:
-                return f"{runs}/{wickets} ({overs})"
+        if not isinstance(
+            team,
+            dict,
+        ):
+            return ""
 
-            if runs and wickets:
-                return f"{runs}/{wickets}"
+        return text(
+            team.get("score")
+        )
 
-            if runs:
-                return runs
+    def _get_venue(
+        self,
+        item: Dict[str, Any],
+    ) -> str:
 
-        return text(value)
+        venue = item.get(
+            "venue"
+        )
 
-    def _get_venue(self, item: Dict[str, Any]) -> str:
-        venue = item.get("venue")
-
-        if isinstance(venue, dict):
-            return text(
+        if isinstance(
+            venue,
+            dict,
+        ):
+            name = text(
                 venue.get("name")
-                or venue.get("title")
             )
+
+            city = text(
+                venue.get("city")
+            )
+
+            if name and city:
+                return f"{name}, {city}"
+
+            return name or city
 
         return text(
             venue
             or item.get("venueName")
             or item.get("ground")
         )
-
-    @staticmethod
-    def _first_value(data: Dict[str, Any], *keys):
-        for key in keys:
-            value = data.get(key)
-
-            if value:
-                if isinstance(value, dict):
-                    return (
-                        value.get("name")
-                        or value.get("title")
-                        or value.get("shortName")
-                    )
-
-                return value
-
-        return ""
