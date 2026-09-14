@@ -1,1 +1,1 @@
-web: gunicorn CrixData:app
+web: gunicorn app:app
