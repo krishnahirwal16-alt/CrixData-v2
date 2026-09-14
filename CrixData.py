@@ -12,7 +12,7 @@ from flask import Flask, jsonify, render_template
 app = Flask(__name__)
 
 # ============================================================
-# CrixData Multi-Provider v2
+# CrixData Multi-Provider v4
 #
 # Providers:
 #   1) Highlightly Cricket API
@@ -30,7 +30,7 @@ app = Flask(__name__)
 
 IST = pytz.timezone("Asia/Kolkata")
 
-HIGHLIGHTLY_MATCHES_URL = "https://cricket.highlightly.net/matches"
+HIGHLIGHTLY_MATCHES_URL = "https://sports.highlightly.net/cricket/matches"
 CRICKETDATA_SCORE_URL = "https://api.cricapi.com/v1/cricScore"
 
 # Two Highlightly requests (today + tomorrow) and one CricketData
@@ -375,8 +375,9 @@ def fetch_highlightly_for_date(date_string):
         url,
         {
             "x-rapidapi-key": get_env("HIGHLIGHTLY_API_KEY"),
+            "x-rapidapi-host": "sport-highlights-api.p.rapidapi.com",
             "Accept": "application/json",
-            "User-Agent": "CrixData/2.0",
+            "User-Agent": "CrixData/4.0",
         },
     )
 
@@ -453,7 +454,7 @@ def fetch_cricketdata():
         url,
         {
             "Accept": "application/json",
-            "User-Agent": "CrixData/2.0",
+            "User-Agent": "CrixData/4.0",
         },
     )
 
@@ -497,11 +498,27 @@ def canonical_competition(league_name, home="", away=""):
         team = lower(team)
         return any(marker in team for marker in NATIONAL_TEAM_MARKERS)
 
+    def is_a_side(team):
+        team = lower(team)
+        return (
+            team.endswith(" a")
+            or " a women" in team
+            or " a women's" in team
+            or " a women’s" in team
+            or "under-" in team
+            or "under " in team
+            or "under-19" in team
+            or "under-19s" in team
+        )
+
     home_national = is_national_side(home_name)
     away_national = is_national_side(away_name)
 
-    # International matchup gets priority.
+    # "A" / youth national sides are international cricket, but keep them
+    # clearly distinguished from senior internationals.
     if home_national and away_national:
+        if is_a_side(home_name) or is_a_side(away_name):
+            return "International A / Youth"
         return "International"
 
     # Explicit international competition names.
@@ -554,6 +571,7 @@ def is_relevant_cricket_match(competition):
         "Abu Dhabi T10",
         "ETPL",
         "International",
+        "International A / Youth",
         "India Domestic",
         "Other Cricket",
     )
@@ -1200,12 +1218,18 @@ def match_details(match_id):
             url,
             {
                 "x-rapidapi-key": get_env("HIGHLIGHTLY_API_KEY"),
+                "x-rapidapi-host": "sport-highlights-api.p.rapidapi.com",
                 "Accept": "application/json",
-                "User-Agent": "CrixData/3.0",
+                "User-Agent": "CrixData/4.0",
             },
         )
 
-        return jsonify(payload)
+        if isinstance(payload, dict):
+            return jsonify(payload)
+
+        return jsonify({
+            "data": payload,
+        })
 
     except Exception as exc:
         return jsonify({
