@@ -1,58 +1,86 @@
 import json
 import urllib.request
-import xml.etree.ElementTree as ET
+from datetime import datetime
+import pytz
 from flask import Flask, render_template
 
 app = Flask(__name__)
 
-def fetch_rss_matches():
-    url = "https://static.cricinfo.com/rss/livescores.xml"
+def fetch_global_cricket():
+    # ESPN Global Scoreboard (Covers IPL, CPL, BBL, Test, ODI, T20, Men, Women, U19)
+    url = "https://site.web.api.espn.com/apis/site/v2/sports/cricket/13840/scoreboard"
     matches = {'live': [], 'upcoming': [], 'finished': []}
     
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            xml_data = response.read()
-            root = ET.fromstring(xml_data)
+        req = urllib.request.Request(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+        with urllib.request.urlopen(req, timeout=12) as response:
+            data = json.loads(response.read().decode('utf-8'))
             
-            for item in root.findall('.//item'):
-                title = item.find('title').text if item.find('title') is not None else ''
-                description = item.find('description').text if item.find('description') is not None else ''
+            for evt in data.get('events', []):
+                comp = evt.get('competitions', [{}])[0]
+                competitors = comp.get('competitors', [])
                 
-                # Parsing team scores and status from title/description
-                parts = title.split('v')
-                t1 = parts[0].strip() if len(parts) > 0 else 'Team A'
-                t2 = parts[1].strip() if len(parts) > 1 else 'Team B'
+                # Team details
+                t1 = competitors[0].get('team', {}).get('displayName', 'Team A') if len(competitors) > 0 else 'Team A'
+                t1_score = competitors[0].get('score', '') if len(competitors) > 0 else ''
+                
+                t2 = competitors[1].get('team', {}).get('displayName', 'Team B') if len(competitors) > 1 else 'Team B'
+                t2_score = competitors[1].get('score', '') if len(competitors) > 1 else ''
+                
+                # Match status & state
+                status_obj = comp.get('status', {})
+                state = status_obj.get('type', {}).get('state', 'pre')  # 'in', 'pre', 'post'
+                status_detail = status_obj.get('type', {}).get('detail', '')
+                
+                # Venue & Date Formatting
+                venue = comp.get('venue', {}).get('fullName', 'Venue TBD')
+                raw_date = evt.get('date', '')
+                
+                # Time conversion to IST and Local
+                ist_time = "TBD"
+                match_day = ""
+                if raw_date:
+                    try:
+                        utc_dt = datetime.strptime(raw_date, "%Y-%m-%dT%H:%MZ").replace(tzinfo=pytz.utc)
+                        ist_dt = utc_dt.astimezone(pytz.timezone('Asia/Kolkata'))
+                        ist_time = ist_dt.strftime("%I:%M %p IST")
+                        match_day = ist_dt.strftime("%A, %b %d, %Y")
+                    except:
+                        match_day = raw_date[:10]
+
+                series_name = evt.get('season', {}).get('slug', 'Cricket Series').upper().replace('-', ' ')
                 
                 match_info = {
-                    'title': title,
+                    'title': evt.get('name', f"{t1} vs {t2}"),
+                    'series': series_name,
                     't1': t1,
+                    't1_score': t1_score if t1_score else 'Yet to bat',
                     't2': t2,
-                    'status': description if description else 'Match status updating...',
-                    'venue': 'International / Domestic Venue'
+                    't2_score': t2_score if t2_score else 'Yet to bat',
+                    'status': status_detail,
+                    'venue': venue,
+                    'day': match_day,
+                    'ist_time': ist_time
                 }
                 
-                # Simple categorization logic
-                title_lower = title.lower()
-                desc_lower = description.lower()
-                
-                if 'won' in title_lower or 'won' in desc_lower or 'drawn' in title_lower:
-                    matches['finished'].append(match_info)
-                elif 'match over' in desc_lower or 'result' in desc_lower:
-                    matches['finished'].append(match_info)
-                elif 'match starts' in desc_lower or 'opt' in desc_lower or 'yet to' in desc_lower:
-                    matches['upcoming'].append(match_info)
-                else:
+                # Strict Section Categorization
+                if state == 'in':
                     matches['live'].append(match_info)
+                elif state == 'post':
+                    matches['finished'].append(match_info)
+                else:
+                    matches['upcoming'].append(match_info)
                     
     except Exception as e:
-        print(f"RSS Fetch Error: {e}")
+        print(f"Error fetching matches: {e}")
         
     return matches
 
 @app.route('/')
 def home():
-    matches = fetch_rss_matches()
+    matches = fetch_global_cricket()
     return render_template('index.html', matches=matches)
 
 if __name__ == '__main__':
