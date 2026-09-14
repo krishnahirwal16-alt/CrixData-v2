@@ -176,6 +176,15 @@ NATIONAL_TEAM_MARKERS = (
     "jersey",
     "guernsey",
     "bermuda",
+    "sierra leone",
+    "uganda",
+    "tanzania",
+    "kenya",
+    "rwanda",
+    "zambia",
+    "malawi",
+    "botswana",
+    "namibia",
     "germany",
     "france",
     "italy",
@@ -184,6 +193,20 @@ NATIONAL_TEAM_MARKERS = (
     "india a",
     "australia a",
     "england lions",
+    "pakistan a",
+    "australia women",
+    "india women",
+    "england women",
+    "pakistan women",
+    "south africa women",
+    "sri lanka women",
+    "new zealand women",
+    "west indies women",
+    "bangladesh women",
+    "ireland women",
+    "afghanistan women",
+    "australia a",
+    "india a",
     "pakistan a",
     "south africa a",
     "new zealand under",
@@ -209,6 +232,9 @@ INTERNATIONAL_SERIES_MARKERS = (
     "t20 international",
     "test series",
     "bilateral",
+    "tri-series",
+    "tri series",
+    "tour of",
 )
 
 # Highlightly cricket-state values from its documented cricket API.
@@ -380,6 +406,8 @@ def fetch_highlightly():
     tomorrow = tomorrow + timedelta(days=1)
     tomorrow_string = tomorrow.strftime("%Y-%m-%d")
 
+    # Fetch a small rolling window. Current + next day is the
+    # most useful free-tier compromise for the homepage.
     today_data, today_headers = fetch_highlightly_for_date(today)
     tomorrow_data, tomorrow_headers = fetch_highlightly_for_date(
         tomorrow_string
@@ -447,42 +475,55 @@ def fetch_cricketdata():
 # ============================================================
 
 def canonical_competition(league_name, home="", away=""):
-    combined = f"{league_name} {home} {away}".strip().lower()
+    """
+    Competition classification.
 
-    # The Hundred gets one canonical family. We distinguish the
-    # women's competition using the provider name/team name.
+    Priority:
+      1) Explicit international/national-team matchup
+      2) Exact/known major competition
+      3) Indian domestic
+      4) None (unknown)
+
+    The international check comes FIRST so a bad provider league label
+    cannot turn an India-vs-Afghanistan fixture into a domestic/league match.
+    """
+    league = lower(league_name)
+    home_name = lower(home)
+    away_name = lower(away)
+
+    combined = f"{league} {home_name} {away_name}".strip()
+
+    def is_national_side(team):
+        team = lower(team)
+        return any(marker in team for marker in NATIONAL_TEAM_MARKERS)
+
+    home_national = is_national_side(home_name)
+    away_national = is_national_side(away_name)
+
+    # International matchup gets priority.
+    if home_national and away_national:
+        return "International"
+
+    # Explicit international competition names.
+    if contains_any(league, INTERNATIONAL_SERIES_MARKERS):
+        return "International"
+
+    # Major competition classification.
+    # The Hundred is one family; split men/women where possible.
     if "the hundred" in combined:
         if contains_any(
             combined,
             ("women", "women's", "women’s"),
         ):
             return "The Hundred Women"
-
         return "The Hundred Men"
 
     for canonical, aliases in TARGET_ALIASES.items():
         if any(alias in combined for alias in aliases):
-            if canonical == "The Hundred":
-                return "The Hundred Men"
             return canonical
 
     if contains_any(combined, INDIA_DOMESTIC_MARKERS):
         return "India Domestic"
-
-    # International competition name.
-    if contains_any(combined, INTERNATIONAL_SERIES_MARKERS):
-        return "International"
-
-    # Two national-team-like sides are enough to identify a likely
-    # international fixture when the series name is generic.
-    national_hits = sum(
-        1
-        for marker in NATIONAL_TEAM_MARKERS
-        if marker in combined
-    )
-
-    if national_hits >= 2:
-        return "International"
 
     return None
 
@@ -514,6 +555,7 @@ def is_relevant_cricket_match(competition):
         "ETPL",
         "International",
         "India Domestic",
+        "Other Cricket",
     )
 
 
@@ -816,20 +858,101 @@ def cross_provider_key(match):
     )
 
 
+def merge_field_value(primary, secondary):
+    """
+    Keep the primary provider's value when it is useful; otherwise use
+    the secondary provider's value.
+    """
+    if primary is not None:
+        value = primary
+        if isinstance(value, str):
+            if value.strip():
+                return value
+        elif value not in ("", [], {}, "Yet to bat"):
+            return value
+
+    if secondary is not None:
+        value = secondary
+        if isinstance(value, str):
+            if value.strip():
+                return value
+        elif value not in ("", [], {}):
+            return value
+
+    return primary or secondary
+
+
+def merge_same_match(primary, secondary):
+    """
+    Merge a Highlightly + CricketData copy of the same match.
+
+    Highlightly is preferred for its explicit cricket state, while
+    CricketData can fill score/venue/status gaps.
+    """
+    result = dict(primary)
+
+    for key in (
+        "t1_score",
+        "t2_score",
+        "t1_info",
+        "t2_info",
+        "venue",
+        "series",
+        "match_type",
+        "state",
+        "report",
+        "start_dt",
+    ):
+        result[key] = merge_field_value(
+            result.get(key),
+            secondary.get(key),
+        )
+
+    # Keep a readable CricketData result when Highlightly has no report.
+    if not result.get("report"):
+        result["report"] = secondary.get("report")
+
+    # Preserve the provider identity for debugging/traceability.
+    result["providers"] = [
+        "Highlightly",
+        "CricketData",
+    ]
+
+    # If Highlightly has no useful state, use CricketData's state.
+    if not result.get("state"):
+        result["state"] = secondary.get("state", "")
+
+    return result
+
+
 def merge_provider_matches(highlightly, cricketdata):
     """
-    Highlightly wins when both providers have the same match.
-    CricketData fills gaps that Highlightly does not have.
+    Merge same matches across providers instead of dropping one copy.
+
+    Unknown competitions are retained as "Other Cricket" rather than
+    being silently discarded. This is important for discovering coverage
+    gaps and prevents whole sections becoming artificially empty.
     """
     merged = {}
     order = []
 
+    def prepare(item):
+        item = dict(item)
+
+        if not item.get("competition"):
+            item["competition"] = "Other Cricket"
+
+        if not is_relevant_cricket_match(item.get("competition")):
+            # Valid cricket record not matching our major-league allow-list.
+            item["competition"] = "Other Cricket"
+
+        return item
+
     for item in highlightly:
-        if not is_relevant_cricket_match(
-            item.get("competition")
-        ):
+        if not isinstance(item, dict):
             continue
 
+        item = prepare(item)
         key = cross_provider_key(item)
 
         if key not in merged:
@@ -837,14 +960,18 @@ def merge_provider_matches(highlightly, cricketdata):
             order.append(key)
 
     for item in cricketdata:
-        if not is_relevant_cricket_match(
-            item.get("competition")
-        ):
+        if not isinstance(item, dict):
             continue
 
+        item = prepare(item)
         key = cross_provider_key(item)
 
-        if key not in merged:
+        if key in merged:
+            merged[key] = merge_same_match(
+                merged[key],
+                item,
+            )
+        else:
             merged[key] = item
             order.append(key)
 
@@ -970,6 +1097,7 @@ def fetch_global_cricket(force=False):
             "cricketdata_raw": len(cricketdata_raw),
             "merged_relevant": len(merged),
             "cache_seconds": CACHE_SECONDS,
+            "classification": "major + international + India domestic + other cricket",
         },
     }
 
@@ -1020,7 +1148,8 @@ def fetch_global_cricket(force=False):
         f"live={len(result['live'])},",
         f"upcoming={len(result['upcoming'])},",
         f"finished={len(result['finished'])},",
-        f"errors={len(errors)}",
+        f"errors={len(errors)},",
+        f"other={sum(1 for m in merged if m.get('competition') == 'Other Cricket')}",
     )
 
     return result
@@ -1041,6 +1170,48 @@ def home():
 @app.route("/api/matches")
 def api_matches():
     return jsonify(fetch_global_cricket())
+
+
+@app.route("/api/matches/<match_id>/details")
+def match_details(match_id):
+    """
+    On-demand Highlightly detail lookup.
+
+    This is intentionally NOT called for every card during page load.
+    It protects the free API quota while still allowing exact venue and
+    deeper match information to be fetched for a specific match.
+    """
+    try:
+        safe_id = text(match_id)
+
+        if not safe_id.isdigit():
+            # Highlightly IDs observed for Cricket API are numeric.
+            return jsonify({
+                "ok": False,
+                "error": "Invalid Highlightly match id.",
+            }), 400
+
+        url = (
+            "https://sports.highlightly.net/cricket/matches/"
+            f"{urllib.parse.quote(safe_id)}"
+        )
+
+        payload, _ = request_json(
+            url,
+            {
+                "x-rapidapi-key": get_env("HIGHLIGHTLY_API_KEY"),
+                "Accept": "application/json",
+                "User-Agent": "CrixData/3.0",
+            },
+        )
+
+        return jsonify(payload)
+
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }), 502
 
 
 @app.route("/health")
