@@ -144,10 +144,19 @@
             white-space: nowrap;
         }
 
+        .team-info {
+            display: block;
+            color: #8b949e;
+            font-size: 11px;
+            font-weight: 500;
+            margin-top: 3px;
+        }
+
         .status-box {
             font-size: 13px;
             font-weight: 700;
             margin-top: 10px;
+            line-height: 1.4;
         }
 
         .info-grid {
@@ -186,7 +195,7 @@
             margin-bottom: 15px;
         }
 
-        .note {
+        .meta-box {
             text-align: center;
             color: #687386;
             font-size: 11px;
@@ -229,7 +238,7 @@
 
     {% if matches.errors %}
     <div class="error-box">
-        <strong>Temporary provider notice:</strong>
+        <strong>Provider notice:</strong>
         <ul style="margin: 6px 0 0 18px;">
             {% for error in matches.errors %}
             <li>{{ error }}</li>
@@ -245,7 +254,7 @@
             data-tab="live"
             onclick="switchTab('live')"
         >
-            🔴 LIVE
+            🔴 LIVE ({{ matches.live|length }})
         </button>
 
         <button
@@ -253,7 +262,7 @@
             data-tab="upcoming"
             onclick="switchTab('upcoming')"
         >
-            📅 UPCOMING
+            📅 UPCOMING ({{ matches.upcoming|length }})
         </button>
 
         <button
@@ -261,7 +270,7 @@
             data-tab="finished"
             onclick="switchTab('finished')"
         >
-            ✅ FINISHED
+            ✅ FINISHED ({{ matches.finished|length }})
         </button>
 
     </div>
@@ -280,17 +289,36 @@
                 </span>
                 <span>LIVE</span>
             </div>
+            <div style="font-size:10px;color:#687386;margin-top:-4px;">
+                Source: {{ m.provider }}
+            </div>
 
             <div class="match-teams">
 
                 <div class="team-row">
-                    <span class="team-name">{{ m.t1 }}</span>
-                    <span class="score">{{ m.t1_score }}</span>
+                    <div class="team-name">
+                        {{ m.t1 }}
+                        {% if m.t1_info %}
+                        <span class="team-info">{{ m.t1_info }}</span>
+                        {% endif %}
+                    </div>
+
+                    <span class="score">
+                        {{ m.t1_score }}
+                    </span>
                 </div>
 
                 <div class="team-row">
-                    <span class="team-name">{{ m.t2 }}</span>
-                    <span class="score">{{ m.t2_score }}</span>
+                    <div class="team-name">
+                        {{ m.t2 }}
+                        {% if m.t2_info %}
+                        <span class="team-info">{{ m.t2_info }}</span>
+                        {% endif %}
+                    </div>
+
+                    <span class="score">
+                        {{ m.t2_score }}
+                    </span>
                 </div>
 
             </div>
@@ -301,13 +329,23 @@
 
             <div class="info-grid">
                 <div class="info-item">
-                    Venue: <span>{{ m.venue }}</span>
+                    Venue: <span id="venue-{{ loop.index }}">{{ m.venue }}</span>
                 </div>
 
                 <div class="info-item">
                     Time: <span>{{ m.ist_time }}</span>
                 </div>
             </div>
+
+            {% if m.provider == "Highlightly" %}
+            <button
+                class="refresh-btn"
+                style="margin-top:10px;"
+                onclick="loadDetails('{{ m.id.split('::')[-1] }}', 'venue-{{ loop.index }}', this)"
+            >
+                View exact venue/details
+            </button>
+            {% endif %}
 
         </div>
 
@@ -334,6 +372,9 @@
                     {% if m.match_type %} · {{ m.match_type }}{% endif %}
                 </span>
                 <span>UPCOMING</span>
+            </div>
+            <div style="font-size:10px;color:#687386;margin-top:-4px;">
+                Source: {{ m.provider }}
             </div>
 
             <div class="match-teams">
@@ -362,11 +403,24 @@
                     IST Time: <span>{{ m.ist_time }}</span>
                 </div>
 
-                <div class="info-item" style="grid-column: span 2;">
-                    Venue: <span>{{ m.venue }}</span>
+                <div
+                    class="info-item"
+                    style="grid-column: span 2;"
+                >
+                    Venue: <span id="upcoming-venue-{{ loop.index }}">{{ m.venue }}</span>
                 </div>
 
             </div>
+
+            {% if m.provider == "Highlightly" %}
+            <button
+                class="refresh-btn"
+                style="margin-top:10px;"
+                onclick="loadDetails('{{ m.id.split('::')[-1] }}', 'upcoming-venue-{{ loop.index }}', this)"
+            >
+                View exact venue/details
+            </button>
+            {% endif %}
 
         </div>
 
@@ -394,17 +448,36 @@
                 </span>
                 <span>RESULT</span>
             </div>
+            <div style="font-size:10px;color:#687386;margin-top:-4px;">
+                Source: {{ m.provider }}
+            </div>
 
             <div class="match-teams">
 
                 <div class="team-row">
-                    <span class="team-name">{{ m.t1 }}</span>
-                    <span class="score">{{ m.t1_score }}</span>
+                    <div class="team-name">
+                        {{ m.t1 }}
+                        {% if m.t1_info %}
+                        <span class="team-info">{{ m.t1_info }}</span>
+                        {% endif %}
+                    </div>
+
+                    <span class="score">
+                        {{ m.t1_score }}
+                    </span>
                 </div>
 
                 <div class="team-row">
-                    <span class="team-name">{{ m.t2 }}</span>
-                    <span class="score">{{ m.t2_score }}</span>
+                    <div class="team-name">
+                        {{ m.t2 }}
+                        {% if m.t2_info %}
+                        <span class="team-info">{{ m.t2_info }}</span>
+                        {% endif %}
+                    </div>
+
+                    <span class="score">
+                        {{ m.t2_score }}
+                    </span>
                 </div>
 
             </div>
@@ -420,10 +493,20 @@
                 </div>
 
                 <div class="info-item">
-                    Venue: <span>{{ m.venue }}</span>
+                    Venue: <span id="finished-venue-{{ loop.index }}">{{ m.venue }}</span>
                 </div>
 
             </div>
+
+            {% if m.provider == "Highlightly" %}
+            <button
+                class="refresh-btn"
+                style="margin-top:10px;"
+                onclick="loadDetails('{{ m.id.split('::')[-1] }}', 'finished-venue-{{ loop.index }}', this)"
+            >
+                View exact venue/details
+            </button>
+            {% endif %}
 
         </div>
 
@@ -437,8 +520,10 @@
 
     </div>
 
-    <div class="note">
-        Highlightly + CricketData · Provider cache: 20 minutes
+    <div class="meta-box">
+        Highlightly + CricketData · Cached for 30 minutes<br>
+        Major competitions, international, India domestic and other provider-covered cricket are retained.
+        Venue details are loaded on demand to protect the free API quota.
     </div>
 
 </div>
@@ -469,6 +554,55 @@
 
     function manualRefresh() {
         window.location.reload();
+    }
+
+    async function loadDetails(matchId, venueElementId, button) {
+        if (!matchId) {
+            return;
+        }
+
+        button.disabled = true;
+        button.textContent = 'Loading...';
+
+        try {
+            const response = await fetch(
+                `/api/matches/${encodeURIComponent(matchId)}/details`
+            );
+
+            const payload = await response.json();
+
+            if (!response.ok || payload.ok === false) {
+                throw new Error(payload.error || 'Detail request failed');
+            }
+
+            const item = Array.isArray(payload?.data)
+                ? payload.data[0]
+                : (payload?.data || payload);
+
+            const venueObject = item?.venue || item?.stadium || null;
+
+            const venue = (
+                venueObject?.name ||
+                venueObject?.fullName ||
+                venueObject?.stadium ||
+                (typeof venueObject === 'string' ? venueObject : null) ||
+                null
+            );
+
+            const el = document.getElementById(venueElementId);
+
+            if (el && venue) {
+                el.textContent = venue;
+            }
+
+            button.textContent = venue
+                ? 'Venue loaded'
+                : 'No extra venue data';
+        } catch (error) {
+            button.textContent = 'Details unavailable';
+        } finally {
+            button.disabled = false;
+        }
     }
 
     document.addEventListener('DOMContentLoaded', () => {
