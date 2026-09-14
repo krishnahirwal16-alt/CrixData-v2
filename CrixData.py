@@ -18,7 +18,6 @@ DISCOVERY_URL = (
     "https://site.api.espn.com/apis/personalized/v2/scoreboard/header"
     "?sport=cricket&region=in&tz=Asia/Calcutta"
 )
-
 # Keep only recent finished matches on the main page.
 # This prevents very old archived matches (for example, 2008)
 # from appearing in the FINISHED tab.
