@@ -56,7 +56,7 @@
         }
 
         .container {
-            max-width: 850px;
+            max-width: 900px;
             margin: 25px auto;
             padding: 0 15px;
         }
@@ -176,6 +176,16 @@
             border: 1px dashed #30363d;
         }
 
+        .error-box {
+            background: #2a1212;
+            border: 1px solid #713333;
+            color: #fca5a5;
+            padding: 12px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            margin-bottom: 15px;
+        }
+
         .note {
             text-align: center;
             color: #687386;
@@ -217,6 +227,17 @@
 
 <div class="container">
 
+    {% if matches.errors %}
+    <div class="error-box">
+        <strong>Temporary provider notice:</strong>
+        <ul style="margin: 6px 0 0 18px;">
+            {% for error in matches.errors %}
+            <li>{{ error }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
     <div class="tabs">
 
         <button
@@ -254,7 +275,7 @@
 
             <div class="card-meta">
                 <span>
-                    {{ m.series }}
+                    {{ m.competition }}
                     {% if m.match_type %} · {{ m.match_type }}{% endif %}
                 </span>
                 <span>LIVE</span>
@@ -279,7 +300,6 @@
             </div>
 
             <div class="info-grid">
-
                 <div class="info-item">
                     Venue: <span>{{ m.venue }}</span>
                 </div>
@@ -287,7 +307,6 @@
                 <div class="info-item">
                     Time: <span>{{ m.ist_time }}</span>
                 </div>
-
             </div>
 
         </div>
@@ -295,7 +314,7 @@
         {% else %}
 
         <div class="empty-msg">
-            No live matches in progress right now.
+            No live matches in the current provider feeds.
         </div>
 
         {% endfor %}
@@ -311,7 +330,7 @@
 
             <div class="card-meta">
                 <span>
-                    {{ m.series }}
+                    {{ m.competition }}
                     {% if m.match_type %} · {{ m.match_type }}{% endif %}
                 </span>
                 <span>UPCOMING</span>
@@ -354,7 +373,7 @@
         {% else %}
 
         <div class="empty-msg">
-            No upcoming matches in the current feed window.
+            No upcoming matches in the current provider feeds.
         </div>
 
         {% endfor %}
@@ -370,7 +389,7 @@
 
             <div class="card-meta">
                 <span>
-                    {{ m.series }}
+                    {{ m.competition }}
                     {% if m.match_type %} · {{ m.match_type }}{% endif %}
                 </span>
                 <span>RESULT</span>
@@ -411,7 +430,7 @@
         {% else %}
 
         <div class="empty-msg">
-            No recent finished matches in the current feed window.
+            No recent finished matches in the current provider feeds.
         </div>
 
         {% endfor %}
@@ -419,7 +438,7 @@
     </div>
 
     <div class="note">
-        CricketData eCricScore feed · Server-side cache: 15 minutes
+        Highlightly + CricketData · Provider cache: 20 minutes
     </div>
 
 </div>
