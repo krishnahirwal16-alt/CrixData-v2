@@ -2,134 +2,361 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
 
     <title>CrixData — Cricket Live Scores</title>
 
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
 </head>
 
 <body>
 
+    <!-- =========================
+         TOP BAR
+         ========================= -->
+
     <header class="topbar">
+
         <div class="brand">
-            <div class="brand-logo">CD</div>
+
+            <div class="brand-logo">
+                CD
+            </div>
 
             <div>
                 <h1>CrixData</h1>
                 <p>Global Cricket Scores</p>
             </div>
+
         </div>
 
+
         <div class="connection">
-            <span id="connectionDot" class="connection-dot"></span>
-            <span id="connectionText">Loading...</span>
+
+            <span
+                id="connectionDot"
+                class="connection-dot"
+            ></span>
+
+            <span id="connectionText">
+                Loading...
+            </span>
+
         </div>
+
     </header>
 
 
     <main class="container">
 
+        <!-- =========================
+             INTRO
+             ========================= -->
+
         <section class="page-intro">
+
             <div>
                 <h2>Cricket Matches</h2>
-                <p>Live, upcoming and finished matches in one place.</p>
+
+                <p>
+                    Live, upcoming and finished matches in one place.
+                </p>
             </div>
 
             <div class="last-updated">
+
                 Updated:
                 <span id="updatedAt">—</span>
+
             </div>
+
         </section>
 
 
-        <nav class="tabs" aria-label="Match status">
-            <button class="tab active" data-section="live">
+        <!-- =========================
+             SEARCH
+             ========================= -->
+
+        <section class="search-section">
+
+            <div class="search-box">
+
+                <div class="search-icon">
+                    🔍
+                </div>
+
+                <input
+                    id="matchSearch"
+                    type="search"
+                    autocomplete="off"
+                    placeholder="Search team, league, tournament, series or match..."
+                    aria-label="Search cricket matches"
+                >
+
+                <button
+                    id="clearSearch"
+                    type="button"
+                    class="search-clear hidden"
+                    aria-label="Clear search"
+                >
+                    ×
+                </button>
+
+            </div>
+
+
+            <div
+                id="suggestions"
+                class="suggestions hidden"
+                role="listbox"
+            ></div>
+
+        </section>
+
+
+        <!-- =========================
+             SEARCH RESULTS
+             ========================= -->
+
+        <section
+            id="searchSection"
+            class="search-results-section hidden"
+        >
+
+            <div class="section-heading">
+
+                <div>
+                    <h3>
+                        Search Results
+                    </h3>
+
+                    <p
+                        id="searchSummary"
+                        class="search-summary"
+                    ></p>
+                </div>
+
+                <button
+                    id="closeSearch"
+                    type="button"
+                    class="close-search-button"
+                >
+                    Clear
+                </button>
+
+            </div>
+
+
+            <div
+                id="searchResults"
+                class="search-results"
+            ></div>
+
+        </section>
+
+
+        <!-- =========================
+             NORMAL MATCH TABS
+             ========================= -->
+
+        <nav
+            id="matchTabs"
+            class="tabs"
+            aria-label="Match status"
+        >
+
+            <button
+                class="tab active"
+                data-section="live"
+            >
                 LIVE
-                <span id="liveCount" class="count">0</span>
+
+                <span
+                    id="liveCount"
+                    class="count"
+                >
+                    0
+                </span>
+
             </button>
 
-            <button class="tab" data-section="upcoming">
+
+            <button
+                class="tab"
+                data-section="upcoming"
+            >
                 UPCOMING
-                <span id="upcomingCount" class="count">0</span>
+
+                <span
+                    id="upcomingCount"
+                    class="count"
+                >
+                    0
+                </span>
+
             </button>
 
-            <button class="tab" data-section="finished">
+
+            <button
+                class="tab"
+                data-section="finished"
+            >
                 FINISHED
-                <span id="finishedCount" class="count">0</span>
+
+                <span
+                    id="finishedCount"
+                    class="count"
+                >
+                    0
+                </span>
+
             </button>
+
         </nav>
 
 
-        <section id="liveSection" class="match-section active-section">
+        <!-- =========================
+             LIVE
+             ========================= -->
+
+        <section
+            id="liveSection"
+            class="match-section active-section"
+        >
+
             <div class="section-heading">
-                <h3>Live Matches</h3>
-                <span class="section-status">LIVE NOW</span>
+
+                <h3>
+                    Live Matches
+                </h3>
+
+                <span class="section-status">
+                    LIVE NOW
+                </span>
+
             </div>
 
-            <div id="liveMatches" class="match-grid">
-                <div class="loading">Loading live matches...</div>
+
+            <div
+                id="liveMatches"
+                class="match-grid"
+            >
+
+                <div class="loading">
+                    Loading live matches...
+                </div>
+
             </div>
+
         </section>
 
 
-        <section id="upcomingSection" class="match-section">
+        <!-- =========================
+             UPCOMING
+             ========================= -->
+
+        <section
+            id="upcomingSection"
+            class="match-section"
+        >
+
             <div class="section-heading">
-                <h3>Upcoming Matches</h3>
-                <span class="section-status">NEXT MATCHES</span>
+
+                <h3>
+                    Upcoming Matches
+                </h3>
+
+                <span class="section-status">
+                    NEXT MATCHES
+                </span>
+
             </div>
 
-            <div id="upcomingMatches" class="match-grid">
-                <div class="loading">Loading upcoming matches...</div>
+
+            <div
+                id="upcomingMatches"
+                class="match-grid"
+            >
+
+                <div class="loading">
+                    Loading upcoming matches...
+                </div>
+
             </div>
+
         </section>
 
 
-        <section id="finishedSection" class="match-section">
+        <!-- =========================
+             FINISHED
+             ========================= -->
+
+        <section
+            id="finishedSection"
+            class="match-section"
+        >
+
             <div class="section-heading">
-                <h3>Finished Matches</h3>
-                <span class="section-status">RECENT RESULTS</span>
+
+                <h3>
+                    Finished Matches
+                </h3>
+
+                <span class="section-status">
+                    RECENT RESULTS
+                </span>
+
             </div>
 
-            <div id="finishedMatches" class="match-grid">
-                <div class="loading">Loading finished matches...</div>
+
+            <div
+                id="finishedMatches"
+                class="match-grid"
+            >
+
+                <div class="loading">
+                    Loading finished matches...
+                </div>
+
             </div>
+
         </section>
 
 
-        <div id="globalError" class="global-error hidden"></div>
+        <!-- =========================
+             ERROR
+             ========================= -->
+
+        <div
+            id="globalError"
+            class="global-error hidden"
+        ></div>
 
     </main>
 
 
-    <div id="detailsModal" class="modal hidden">
-        <div class="modal-backdrop" data-close-modal></div>
-
-        <div class="modal-card">
-
-            <button
-                type="button"
-                class="modal-close"
-                data-close-modal
-                aria-label="Close"
-            >
-                ×
-            </button>
-
-            <div id="detailsContent">
-                <div class="loading">Loading match details...</div>
-            </div>
-
-        </div>
-    </div>
-
+    <!-- =========================
+         FOOTER
+         ========================= -->
 
     <footer class="footer">
-        <p>CrixData Cricket Score Platform</p>
+
+        <p>
+            CrixData Cricket Score Platform
+        </p>
+
     </footer>
 
 
-    <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script
+        src="{{ url_for('static', filename='app.js') }}"
+    ></script>
 
 </body>
 </html>
