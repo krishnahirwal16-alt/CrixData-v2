@@ -3,62 +3,83 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CrixData - Live Scores</title>
+    <title>CrixData</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
     <style>
-        body { font-family: Arial, sans-serif; background: #0f172a; color: #fff; margin: 0; padding: 20px; }
-        h1 { text-align: center; color: #38bdf8; }
-        .section-title { color: #facc15; border-bottom: 2px solid #334155; padding-bottom: 5px; margin-top: 30px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; margin-top: 15px; }
-        .card { background: #1e293b; padding: 15px; border-radius: 8px; border-left: 4px solid #38bdf8; }
-        .live { border-left-color: #ef4444; }
-        .team { font-weight: bold; font-size: 1.1em; display: flex; justify-content: space-between; margin: 5px 0; }
-        .status { font-size: 0.85em; color: #94a3b8; margin-top: 8px; }
-        .badge { background: #334155; font-size: 0.75em; padding: 2px 6px; border-radius: 4px; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+        body { background: #0b0e14; color: #e2e8f0; padding-bottom: 50px; }
+        .navbar { background: #161b22; border-bottom: 1px solid #21262d; padding: 15px 5%; display: flex; align-items: center; justify-content: space-between; }
+        .brand { font-size: 24px; font-weight: 800; color: #38bdf8; letter-spacing: -0.5px; }
+        .brand span { color: #22c55e; }
+        .container { max-width: 1200px; margin: 25px auto; padding: 0 15px; }
+        .section-header { display: flex; align-items: center; gap: 10px; margin: 30px 0 15px 0; }
+        .section-title { font-size: 18px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+        .badge-live { background: #ef4444; color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: 700; animation: pulse 1.5s infinite; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 18px; transition: transform 0.2s; }
+        .card:hover { transform: translateY(-3px); border-color: #38bdf8; }
+        .card-header { font-size: 12px; color: #8b949e; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .team-row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; font-size: 15px; font-weight: 600; }
+        .score { color: #38bdf8; font-weight: 700; }
+        .card-footer { margin-top: 14px; padding-top: 10px; border-top: 1px solid #21262d; font-size: 12px; color: #eab308; display: flex; justify-content: space-between; }
+        .empty-msg { background: #161b22; padding: 20px; border-radius: 8px; color: #8b949e; border: 1px dashed #30363d; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
     </style>
 </head>
 <body>
-    <h1>🏏 CrixData Live Portal</h1>
+    <nav class="navbar">
+        <div class="brand">CrixData</div>
+    </nav>
 
-    <h2 class="section-title">🔴 Live Matches</h2>
-    <div class="grid">
-        {% for m in matches.live %}
-        <div class="card live">
-            <span class="badge">{{ m.format }}</span>
-            <div class="team"><span>{{ m.t1 }}</span> <span>{{ m.t1_score }}</span></div>
-            <div class="team"><span>{{ m.t2 }}</span> <span>{{ m.t2_score }}</span></div>
-            <div class="status">{{ m.status }} | {{ m.venue }}</div>
+    <div class="container">
+        <div class="section-header">
+            <span class="badge-live">LIVE</span>
+            <h2 class="section-title">Matches</h2>
         </div>
-        {% else %}
-        <p>No live matches right now.</p>
-        {% endfor %}
-    </div>
+        <div class="grid">
+            {% for m in matches.live %}
+            <div class="card" style="border-left: 4px solid #ef4444;">
+                <div class="card-header">{{ m.title }}</div>
+                <div class="team-row"><span>{{ m.t1 }}</span><span class="score">{{ m.t1_score }}</span></div>
+                <div class="team-row"><span>{{ m.t2 }}</span><span class="score">{{ m.t2_score }}</span></div>
+                <div class="card-footer"><span>{{ m.status }}</span></div>
+            </div>
+            {% else %}
+            <div class="empty-msg">No live matches currently in progress.</div>
+            {% endfor %}
+        </div>
 
-    <h2 class="section-title">📅 Upcoming Matches</h2>
-    <div class="grid">
-        {% for m in matches.upcoming %}
-        <div class="card">
-            <span class="badge">{{ m.format }}</span>
-            <div class="team"><span>{{ m.t1 }}</span></div>
-            <div class="team"><span>{{ m.t2 }}</span></div>
-            <div class="status">{{ m.date }} | {{ m.venue }}</div>
+        <div class="section-header">
+            <h2 class="section-title" style="color: #38bdf8;">Upcoming</h2>
         </div>
-        {% else %}
-        <p>No upcoming matches listed.</p>
-        {% endfor %}
-    </div>
+        <div class="grid">
+            {% for m in matches.upcoming %}
+            <div class="card">
+                <div class="card-header">{{ m.title }}</div>
+                <div class="team-row"><span>{{ m.t1 }}</span></div>
+                <div class="team-row"><span>{{ m.t2 }}</span></div>
+                <div class="card-footer"><span>{{ m.date }}</span><span>{{ m.venue }}</span></div>
+            </div>
+            {% else %}
+            <div class="empty-msg">No upcoming matches scheduled.</div>
+            {% endfor %}
+        </div>
 
-    <h2 class="section-title">✅ Finished Matches</h2>
-    <div class="grid">
-        {% for m in matches.finished %}
-        <div class="card">
-            <span class="badge">{{ m.format }}</span>
-            <div class="team"><span>{{ m.t1 }}</span> <span>{{ m.t1_score }}</span></div>
-            <div class="team"><span>{{ m.t2 }}</span> <span>{{ m.t2_score }}</span></div>
-            <div class="status">{{ m.status }}</div>
+        <div class="section-header">
+            <h2 class="section-title" style="color: #22c55e;">Recent Results</h2>
         </div>
-        {% else %}
-        <p>No recent finished matches.</p>
-        {% endfor %}
+        <div class="grid">
+            {% for m in matches.finished %}
+            <div class="card">
+                <div class="card-header">{{ m.title }}</div>
+                <div class="team-row"><span>{{ m.t1 }}</span><span>{{ m.t1_score }}</span></div>
+                <div class="team-row"><span>{{ m.t2 }}</span><span>{{ m.t2_score }}</span></div>
+                <div class="card-footer"><span style="color: #22c55e;">{{ m.status }}</span></div>
+            </div>
+            {% else %}
+            <div class="empty-msg">No recent finished matches available.</div>
+            {% endfor %}
+        </div>
     </div>
 </body>
 </html>
