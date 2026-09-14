@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -11,123 +12,37 @@ from flask import Flask, jsonify, render_template
 app = Flask(__name__)
 
 # ============================================================
-# CrixData — Multi-provider v1
+# CrixData Multi-Provider v2
+#
 # Providers:
 #   1) Highlightly Cricket API
 #   2) CricketData.org eCricScore
 #
-# IMPORTANT:
-# Both API keys are read from Render Environment Variables.
-# Never paste either key into this source file or GitHub.
+# Design goals:
+#   - Do NOT discard valid matches just because a league name
+#     wasn't in a small hard-coded list.
+#   - Recognize major target competitions.
+#   - Recognize international + Indian domestic matches.
+#   - Correctly read Highlightly's cricket state + score structure.
+#   - Merge duplicate matches from both providers.
+#   - Keep API keys server-side in Render Environment Variables.
 # ============================================================
 
 IST = pytz.timezone("Asia/Kolkata")
 
-HIGHLIGHTLY_URL = "https://cricket.highlightly.net/matches"
-CRICKETDATA_URL = "https://api.cricapi.com/v1/cricScore"
+HIGHLIGHTLY_MATCHES_URL = "https://cricket.highlightly.net/matches"
+CRICKETDATA_SCORE_URL = "https://api.cricapi.com/v1/cricScore"
 
-# With the free 100-requests/day tier, 20 minutes gives a safety margin:
-# 72 potential calls/day/provider when the service is continuously active.
-CACHE_SECONDS = 20 * 60
-
-
-# ============================================================
-# Target competitions
-# ============================================================
-
-# We keep aliases because providers do not always use exactly the
-# same competition name.
-TARGET_ALIASES = {
-    "IPL": [
-        "indian premier league",
-        "ipl",
-    ],
-    "WPL": [
-        "women's premier league",
-        "wpl",
-        "women premier league",
-    ],
-    "BBL": [
-        "big bash league",
-        "bbl",
-    ],
-    "WBBL": [
-        "women's big bash league",
-        "wbbl",
-        "women big bash league",
-    ],
-    "CPL": [
-        "caribbean premier league",
-        "cpl",
-    ],
-    "WCPL": [
-        "women's caribbean premier league",
-        "wcpl",
-        "women caribbean premier league",
-    ],
-    "PSL": [
-        "pakistan super league",
-        "psl",
-    ],
-    "SA20": [
-        "sa20",
-        "south africa20",
-    ],
-    "LPL": [
-        "lanka premier league",
-        "lpl",
-    ],
-    "The Hundred Men": [
-        "the hundred",
-    ],
-    "The Hundred Women": [
-        "the hundred women",
-        "the hundred women’s",
-        "the hundred women",
-    ],
-    "MLC": [
-        "major league cricket",
-        "mlc",
-    ],
-    "ILT20": [
-        "international league t20",
-        "ilt20",
-    ],
-    "Abu Dhabi T10": [
-        "abu dhabi t10",
-        "abu dhabi t10 league",
-    ],
-    "ETPL": [
-        "european t10 premier league",
-        "etpl",
-    ],
-}
-
-# International matches are handled separately because bilateral
-# competitions have many different provider league names.
-INTERNATIONAL_MARKERS = (
-    "international",
-    "icc",
-    "world test",
-    "world cup",
-    "champions trophy",
-    "t20 world cup",
-    "test championship",
-    "test series",
-    "odi series",
-    "t20i",
-    "t20 international",
-)
-
-# Major Indian domestic competitions. This is deliberately conservative.
-INDIA_DOMESTIC_MARKERS = (
-    "ranji trophy",
-    "syed mushtaq ali trophy",
-    "vijay hazare trophy",
-    "duleep trophy",
-    "irani cup",
-    "india a",
-)
+# Two Highlightly requests (today + tomorrow) and one CricketData
+# request per cache refresh.
+#
+# 30 minutes => at most 48 refresh cycles/day.
+# Highlightly: <= 96 requests/day
+# CricketData: <= 48 requests/day
+#
+# This leaves a small safety margin under each provider's 100/day
+# free tier when the service is continuously accessed.
+CACHE_SECONDS = 30 * 60
 
 _cache = {
     "timestamp": 0.0,
@@ -136,41 +51,229 @@ _cache = {
 
 
 # ============================================================
-# Generic helpers
+# Target competitions
 # ============================================================
 
-def safe_text(value):
+TARGET_ALIASES = {
+    "IPL": (
+        "ipl",
+        "indian premier league",
+    ),
+    "WPL": (
+        "wpl",
+        "women's premier league",
+        "women’s premier league",
+        "women premier league",
+    ),
+    "BBL": (
+        "big bash league",
+        "bbl",
+    ),
+    "WBBL": (
+        "women's big bash league",
+        "women’s big bash league",
+        "women big bash league",
+        "wbbl",
+    ),
+    "CPL": (
+        "caribbean premier league",
+        "cpl",
+    ),
+    "WCPL": (
+        "women's caribbean premier league",
+        "women’s caribbean premier league",
+        "women caribbean premier league",
+        "wcpl",
+    ),
+    "PSL": (
+        "pakistan super league",
+        "psl",
+    ),
+    "SA20": (
+        "sa20",
+        "south africa20",
+    ),
+    "LPL": (
+        "lanka premier league",
+        "lpl",
+    ),
+    "The Hundred": (
+        "the hundred",
+        "hundred men",
+        "hundred women",
+    ),
+    "MLC": (
+        "major league cricket",
+        "mlc",
+    ),
+    "ILT20": (
+        "international league t20",
+        "ilt20",
+    ),
+    "Abu Dhabi T10": (
+        "abu dhabi t10",
+        "abu dhabi t10 league",
+    ),
+    "ETPL": (
+        "european t10 premier league",
+        "europe t10 premier league",
+        "etpl",
+    ),
+}
+
+# Major Indian domestic competitions requested for CrixData.
+INDIA_DOMESTIC_MARKERS = (
+    "ranji trophy",
+    "syed mushtaq ali trophy",
+    "vijay hazare trophy",
+    "duleep trophy",
+    "duleep trophy",
+    "irani cup",
+    "india a",
+    "india under",
+    "state t20",
+    "maharaja trophy",
+    "maharashtra premier league",
+    "tamil nadu premier league",
+    "tamil nadu t20",
+    "karnataka premier league",
+    "kerala premier league",
+    "uttar pradesh t20",
+    "delhi premier league",
+    "saurashtra premier league",
+    "bengal pro t20",
+    "bengal t20",
+)
+
+# National-team markers used to recognize international cricket even
+# when the provider's series/competition name is not standardized.
+NATIONAL_TEAM_MARKERS = (
+    "afghanistan",
+    "australia",
+    "bangladesh",
+    "england",
+    "india",
+    "ireland",
+    "new zealand",
+    "pakistan",
+    "south africa",
+    "sri lanka",
+    "west indies",
+    "zimbabwe",
+    "namibia",
+    "scotland",
+    "nepal",
+    "united arab emirates",
+    "oman",
+    "usa",
+    "united states",
+    "netherlands",
+    "canada",
+    "uganda",
+    "papua new guinea",
+    "hong kong",
+    "italy",
+    "jersey",
+    "guernsey",
+    "bermuda",
+    "germany",
+    "france",
+    "italy",
+    "vanuatu",
+    "new zealand a",
+    "india a",
+    "australia a",
+    "england lions",
+    "pakistan a",
+    "south africa a",
+    "new zealand under",
+    "india under",
+    "pakistan under",
+    "england under",
+    "australia under",
+    "bangladesh under",
+    "south africa under",
+    "sri lanka under",
+    "west indies under",
+)
+
+INTERNATIONAL_SERIES_MARKERS = (
+    "international",
+    "icc",
+    "world cup",
+    "champions trophy",
+    "test championship",
+    "world test championship",
+    "odi series",
+    "t20i",
+    "t20 international",
+    "test series",
+    "bilateral",
+)
+
+# Highlightly cricket-state values from its documented cricket API.
+LIVE_STATES = {
+    "in play",
+    "live",
+    "stumps",
+    "lunch",
+    "innings break",
+    "drinks",
+    "tea",
+    "timeout",
+}
+
+FINISHED_STATES = {
+    "finished",
+    "abandoned",
+    "no result",
+    "cancelled",
+    "canceled",
+}
+
+UPCOMING_STATES = {
+    "not started",
+    "scheduled",
+    "to be announced",
+}
+
+DELAYED_STATES = {
+    "match delayed",
+    "delayed",
+}
+
+# ============================================================
+# Basic helpers
+# ============================================================
+
+def text(value):
     return str(value or "").strip()
 
 
-def parse_dt(raw):
+def lower(value):
+    return text(value).lower()
+
+
+def contains_any(value, markers):
+    value = lower(value)
+    return any(marker in value for marker in markers)
+
+
+def parse_datetime(value):
+    raw = text(value)
     if not raw:
         return None
 
-    value = safe_text(raw)
-
     try:
-        value = value.replace("Z", "+00:00")
-        dt = datetime.fromisoformat(value)
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
 
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
 
         return dt.astimezone(timezone.utc)
+
     except ValueError:
         return None
-
-
-def parse_cricketdata_dt(match):
-    return parse_dt(match.get("dateTimeGMT") or match.get("dateTime"))
-
-
-def parse_highlightly_dt(match):
-    return parse_dt(
-        match.get("startTime")
-        or match.get("startDate")
-        or match.get("dateTime")
-    )
 
 
 def format_time(dt_utc):
@@ -181,147 +284,236 @@ def format_time(dt_utc):
             "timestamp": None,
         }
 
-    dt_ist = dt_utc.astimezone(IST)
+    ist_dt = dt_utc.astimezone(IST)
 
     return {
-        "day": dt_ist.strftime("%A, %b %d, %Y"),
-        "ist_time": dt_ist.strftime("%I:%M %p IST"),
+        "day": ist_dt.strftime("%A, %b %d, %Y"),
+        "ist_time": ist_dt.strftime("%I:%M %p IST"),
         "timestamp": dt_utc.timestamp(),
     }
 
 
-def get_highlightly_key():
-    key = safe_text(os.getenv("HIGHLIGHTLY_API_KEY"))
-    if not key:
-        raise RuntimeError("HIGHLIGHTLY_API_KEY is not configured.")
-    return key
+# ============================================================
+# Environment / HTTP
+# ============================================================
+
+def get_env(name):
+    value = text(os.getenv(name))
+
+    if not value:
+        raise RuntimeError(f"{name} is not configured on Render.")
+
+    return value
 
 
-def get_cricketdata_key():
-    key = safe_text(os.getenv("CRICKET_API_KEY"))
-    if not key:
-        raise RuntimeError("CRICKET_API_KEY is not configured.")
-    return key
-
-
-def request_json(url, headers, timeout=15):
+def request_json(url, headers):
     request = urllib.request.Request(
         url,
         headers=headers,
         method="GET",
     )
 
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        text = response.read().decode("utf-8", errors="replace")
-        payload = json.loads(text)
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            payload = json.loads(body)
+            return payload, dict(response.headers)
 
-        return payload, dict(response.headers)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"HTTP {exc.code} from provider: {body[:300]}"
+        ) from exc
 
-
-def contains_any(text, markers):
-    value = safe_text(text).lower()
-    return any(marker in value for marker in markers)
+    except urllib.error.URLError as exc:
+        raise RuntimeError(
+            f"Provider network error: {exc.reason}"
+        ) from exc
 
 
 # ============================================================
-# Highlightly provider
+# Highlightly
 # ============================================================
 
-def fetch_highlightly():
-    """
-    Fetch today's Highlightly cricket matches.
-
-    Highlightly direct-platform requests use x-rapidapi-key.
-    The RapidAPI host header is NOT required for direct Highlightly access.
-    """
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
+def fetch_highlightly_for_date(date_string):
     params = urllib.parse.urlencode({
-        "date": today,
+        "date": date_string,
         "timezone": "Asia/Kolkata",
         "limit": 100,
         "offset": 0,
     })
 
-    url = f"{HIGHLIGHTLY_URL}?{params}"
+    url = f"{HIGHLIGHTLY_MATCHES_URL}?{params}"
 
     payload, headers = request_json(
         url,
         {
-            "x-rapidapi-key": get_highlightly_key(),
+            "x-rapidapi-key": get_env("HIGHLIGHTLY_API_KEY"),
             "Accept": "application/json",
-            "User-Agent": "CrixData/1.0",
+            "User-Agent": "CrixData/2.0",
         },
     )
 
     data = payload.get("data")
 
     if not isinstance(data, list):
-        raise RuntimeError("Highlightly returned invalid data.")
+        raise RuntimeError("Highlightly returned invalid match data.")
 
     return data, headers
 
 
+def fetch_highlightly():
+    now = datetime.now(timezone.utc)
+
+    today = now.strftime("%Y-%m-%d")
+    tomorrow = (
+        now.replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+    )
+
+    # Add one UTC day without another dependency.
+    from datetime import timedelta
+    tomorrow = tomorrow + timedelta(days=1)
+    tomorrow_string = tomorrow.strftime("%Y-%m-%d")
+
+    today_data, today_headers = fetch_highlightly_for_date(today)
+    tomorrow_data, tomorrow_headers = fetch_highlightly_for_date(
+        tomorrow_string
+    )
+
+    # Deduplicate same provider IDs.
+    output = []
+    seen = set()
+
+    for item in today_data + tomorrow_data:
+        if not isinstance(item, dict):
+            continue
+
+        item_id = text(item.get("id"))
+
+        key = item_id or json.dumps(
+            item,
+            sort_keys=True,
+            default=str,
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        output.append(item)
+
+    return output, today_headers or tomorrow_headers
+
+
 # ============================================================
-# CricketData provider
+# CricketData
 # ============================================================
 
 def fetch_cricketdata():
     params = urllib.parse.urlencode({
-        "apikey": get_cricketdata_key(),
+        "apikey": get_env("CRICKET_API_KEY"),
     })
 
-    url = f"{CRICKETDATA_URL}?{params}"
+    url = f"{CRICKETDATA_SCORE_URL}?{params}"
 
     payload, headers = request_json(
         url,
         {
             "Accept": "application/json",
-            "User-Agent": "CrixData/1.0",
+            "User-Agent": "CrixData/2.0",
         },
     )
 
     if payload.get("status") != "success":
         raise RuntimeError(
-            f"CricketData API returned {payload.get('status')}"
+            f"CricketData returned status={payload.get('status')}"
         )
 
     data = payload.get("data")
 
     if not isinstance(data, list):
-        raise RuntimeError("CricketData returned invalid data.")
+        raise RuntimeError("CricketData returned invalid match data.")
 
     return data, headers
 
 
 # ============================================================
-# Competition matching
+# Competition classification
 # ============================================================
 
-def canonical_competition(provider_name):
-    name = safe_text(provider_name).lower()
+def canonical_competition(league_name, home="", away=""):
+    combined = f"{league_name} {home} {away}".strip().lower()
+
+    # The Hundred gets one canonical family. We distinguish the
+    # women's competition using the provider name/team name.
+    if "the hundred" in combined:
+        if contains_any(
+            combined,
+            ("women", "women's", "women’s"),
+        ):
+            return "The Hundred Women"
+
+        return "The Hundred Men"
 
     for canonical, aliases in TARGET_ALIASES.items():
-        if any(alias in name for alias in aliases):
+        if any(alias in combined for alias in aliases):
+            if canonical == "The Hundred":
+                return "The Hundred Men"
             return canonical
 
-    if contains_any(name, INDIA_DOMESTIC_MARKERS):
+    if contains_any(combined, INDIA_DOMESTIC_MARKERS):
         return "India Domestic"
 
-    if contains_any(name, INTERNATIONAL_MARKERS):
+    # International competition name.
+    if contains_any(combined, INTERNATIONAL_SERIES_MARKERS):
+        return "International"
+
+    # Two national-team-like sides are enough to identify a likely
+    # international fixture when the series name is generic.
+    national_hits = sum(
+        1
+        for marker in NATIONAL_TEAM_MARKERS
+        if marker in combined
+    )
+
+    if national_hits >= 2:
         return "International"
 
     return None
 
 
-def is_the_hundred_women(home, away, league_name):
-    combined = f"{league_name} {home} {away}".lower()
+def is_relevant_cricket_match(competition):
+    """
+    We deliberately keep an explicit allow-list at the final stage:
+      - requested major competitions
+      - International
+      - India Domestic
 
-    return (
-        "women" in combined
-        or "women's" in combined
-        or "women’s" in combined
-        or "w " in combined
+    Unknown local/low-tier leagues are not displayed.
+    """
+    return competition in (
+        "IPL",
+        "WPL",
+        "BBL",
+        "WBBL",
+        "CPL",
+        "WCPL",
+        "PSL",
+        "SA20",
+        "LPL",
+        "The Hundred Men",
+        "The Hundred Women",
+        "MLC",
+        "ILT20",
+        "Abu Dhabi T10",
+        "ETPL",
+        "International",
+        "India Domestic",
     )
 
 
@@ -329,77 +521,79 @@ def is_the_hundred_women(home, away, league_name):
 # Highlightly normalization
 # ============================================================
 
-def highlightly_score(match, team_name):
+def highlightly_state(match):
     state = match.get("state") or {}
-    score = state.get("score") or {}
 
-    current = score.get("current")
+    return (
+        text(state.get("description"))
+        or text(state.get("shortDescription"))
+        or ""
+    )
 
-    if isinstance(current, str) and current.strip():
-        return current.strip()
 
-    # Some responses expose scores as a list/object.
-    if isinstance(score, dict):
-        for key in ("home", "away", "value"):
-            value = score.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
+def highlightly_team_data(match, side):
+    state = match.get("state") or {}
+    teams = state.get("teams") or {}
+    value = teams.get(side) or {}
 
-    return "Yet to bat"
+    return {
+        "score": text(value.get("score")),
+        "info": text(value.get("info")),
+    }
 
 
 def normalize_highlightly(match):
-    home = safe_text(
-        (match.get("homeTeam") or {}).get("name")
-        or match.get("homeTeamName")
-    )
-    away = safe_text(
-        (match.get("awayTeam") or {}).get("name")
-        or match.get("awayTeamName")
-    )
-
+    home_obj = match.get("homeTeam") or {}
+    away_obj = match.get("awayTeam") or {}
     league_obj = match.get("league") or {}
-    league_name = safe_text(
+
+    home = text(home_obj.get("name"))
+    away = text(away_obj.get("name"))
+    league_name = text(
         league_obj.get("name")
         or match.get("leagueName")
-        or ""
     )
 
-    canonical = canonical_competition(league_name)
-
-    if canonical == "The Hundred Men" and is_the_hundred_women(
-        home, away, league_name
-    ):
-        canonical = "The Hundred Women"
-
-    state = match.get("state") or {}
-    description = safe_text(
-        state.get("description")
-        or state.get("shortDescription")
-        or ""
+    competition = canonical_competition(
+        league_name,
+        home,
+        away,
     )
 
-    start_dt = parse_highlightly_dt(match)
+    start_dt = parse_datetime(
+        match.get("startTime")
+        or match.get("startDate")
+    )
+
+    state_desc = highlightly_state(match)
+
+    home_state = highlightly_team_data(match, "home")
+    away_state = highlightly_team_data(match, "away")
 
     return {
         "provider": "Highlightly",
-        "provider_id": safe_text(match.get("id")),
-        "canonical": canonical,
+        "provider_id": text(match.get("id")),
+        "competition": competition,
         "title": f"{home} vs {away}",
         "series": league_name or "Cricket",
-        "match_type": safe_text(match.get("format")).upper(),
+        "match_type": text(match.get("format")).upper(),
         "t1": home or "Team A",
         "t2": away or "Team B",
-        "t1_score": highlightly_score(match, home),
-        "t2_score": highlightly_score(match, away),
-        "status_raw": description or safe_text(state.get("type")),
-        "venue": safe_text(
+        "t1_abbrev": text(home_obj.get("abbreviation")),
+        "t2_abbrev": text(away_obj.get("abbreviation")),
+        "t1_score": home_state["score"],
+        "t2_score": away_state["score"],
+        "t1_info": home_state["info"],
+        "t2_info": away_state["info"],
+        "state": state_desc,
+        "report": text(
+            (match.get("state") or {}).get("report")
+        ),
+        "venue": text(
             (match.get("venue") or {}).get("name")
             or (match.get("venue") or {}).get("fullName")
-            or "Venue TBD"
-        ),
+        ) or "Venue TBD",
         "start_dt": start_dt,
-        "timestamp": format_time(start_dt)["timestamp"],
         "raw": match,
     }
 
@@ -409,235 +603,252 @@ def normalize_highlightly(match):
 # ============================================================
 
 def cricketdata_score(match, key):
-    value = safe_text(match.get(key))
+    direct = text(match.get(key))
 
-    if value:
-        return value
+    if direct:
+        return direct
 
-    score = match.get("score")
+    scores = match.get("score")
 
-    if isinstance(score, list):
-        output = []
+    if not isinstance(scores, list):
+        return ""
 
-        for item in score[:4]:
-            if not isinstance(item, dict):
-                continue
+    formatted = []
 
-            runs = item.get("r")
-            wickets = item.get("w")
-            overs = item.get("o")
+    for item in scores[:4]:
+        if not isinstance(item, dict):
+            continue
 
-            if runs is None or wickets is None:
-                continue
+        runs = item.get("r")
+        wickets = item.get("w")
+        overs = item.get("o")
 
-            text = f"{runs}/{wickets}"
+        if runs is None:
+            continue
 
-            if overs:
-                text += f" ({overs})"
+        value = str(runs)
 
-            output.append(text)
+        if wickets is not None:
+            value = f"{runs}/{wickets}"
 
-        index = 0 if key == "t1s" else 1
+        if overs:
+            value += f" ({overs})"
 
-        if index < len(output):
-            return output[index]
+        formatted.append(value)
 
-    return "Yet to bat"
+    index = 0 if key == "t1s" else 1
+
+    if index < len(formatted):
+        return formatted[index]
+
+    return ""
 
 
 def normalize_cricketdata(match):
-    t1 = safe_text(match.get("t1"))
-    t2 = safe_text(match.get("t2"))
-    series = safe_text(match.get("series"))
+    t1 = text(match.get("t1"))
+    t2 = text(match.get("t2"))
+    series = text(match.get("series"))
 
-    canonical = canonical_competition(series)
+    competition = canonical_competition(
+        series,
+        t1,
+        t2,
+    )
 
-    dt = parse_cricketdata_dt(match)
-    status = safe_text(match.get("status"))
+    start_dt = parse_datetime(
+        match.get("dateTimeGMT")
+        or match.get("dateTime")
+    )
 
     return {
         "provider": "CricketData",
-        "provider_id": safe_text(match.get("id")),
-        "canonical": canonical,
-        "title": safe_text(match.get("name")) or f"{t1} vs {t2}",
+        "provider_id": text(match.get("id")),
+        "competition": competition,
+        "title": text(match.get("name"))
+        or f"{t1} vs {t2}",
         "series": series or "Cricket",
-        "match_type": safe_text(match.get("matchType")).upper(),
+        "match_type": text(
+            match.get("matchType")
+        ).upper(),
         "t1": t1 or "Team A",
         "t2": t2 or "Team B",
+        "t1_abbrev": "",
+        "t2_abbrev": "",
         "t1_score": cricketdata_score(match, "t1s"),
         "t2_score": cricketdata_score(match, "t2s"),
-        "status_raw": status,
-        "venue": safe_text(match.get("venue")) or "Venue TBD",
-        "start_dt": dt,
-        "timestamp": format_time(dt)["timestamp"],
+        "t1_info": "",
+        "t2_info": "",
+        "state": text(
+            match.get("status")
+        ),
+        "report": text(
+            match.get("status")
+        ),
+        "venue": text(match.get("venue")) or "Venue TBD",
+        "start_dt": start_dt,
         "raw": match,
     }
 
 
 # ============================================================
-# Status engine
+# Status classification
 # ============================================================
 
-def is_finished(match):
-    raw = (
-        f"{safe_text(match.get('status_raw'))} "
-        f"{safe_text((match.get('raw') or {}).get('ms'))}"
-    ).lower()
+def classify_status(match):
+    provider = match.get("provider")
+    state = lower(match.get("state"))
 
-    if "finished" in raw or "result" in raw or "completed" in raw:
-        return True
+    # Highlightly has the cleanest cricket state model.
+    if provider == "Highlightly":
+        if state in LIVE_STATES:
+            return "live"
+
+        if state in FINISHED_STATES:
+            return "finished"
+
+        if state in UPCOMING_STATES:
+            return "upcoming"
+
+        if state in DELAYED_STATES:
+            # If the provider says delayed and the event start time
+            # is still in the future, keep it upcoming. Otherwise
+            # consider it active.
+            start_dt = match.get("start_dt")
+            if (
+                start_dt is not None
+                and start_dt > datetime.now(timezone.utc)
+            ):
+                return "upcoming"
+            return "live"
+
+    # CricketData uses "ms" and human-readable status.
+    raw = match.get("raw") or {}
+    ms = lower(raw.get("ms"))
+    status = lower(raw.get("status"))
+
+    if ms in {
+        "result",
+        "completed",
+        "complete",
+        "finished",
+        "post",
+    }:
+        return "finished"
 
     if contains_any(
-        raw,
+        status,
         (
             "won by",
-            " draw",
+            "draw",
             "tied",
             "no result",
             "abandoned",
             "cancelled",
+            "canceled",
         ),
     ):
-        return True
-
-    return False
-
-
-def is_live(match):
-    raw = safe_text(match.get("status_raw")).lower()
-
-    if contains_any(
-        raw,
-        (
-            "in play",
-            "live",
-            "in progress",
-            "in-progress",
-            "playing",
-        ),
-    ):
-        return True
-
-    raw_match = match.get("raw") or {}
-
-    ms = safe_text(raw_match.get("ms")).lower()
-
-    if ms in {"live", "in", "inprogress", "in_progress", "ongoing", "playing"}:
-        return True
-
-    # If a provider gives actual score innings for a match whose start time
-    # has passed, treat it as live unless it is a result.
-    if (
-        isinstance(raw_match.get("score"), list)
-        and raw_match.get("score")
-        and match.get("start_dt")
-        and match["start_dt"] <= datetime.now(timezone.utc)
-        and not is_finished(match)
-    ):
-        return True
-
-    return False
-
-
-def get_bucket(match):
-    if is_finished(match):
         return "finished"
 
-    if is_live(match):
+    if ms in {
+        "live",
+        "in",
+        "inprogress",
+        "in_progress",
+        "ongoing",
+        "started",
+        "playing",
+    }:
+        return "live"
+
+    score = raw.get("score")
+    start_dt = match.get("start_dt")
+
+    if (
+        isinstance(score, list)
+        and score
+        and start_dt is not None
+        and start_dt <= datetime.now(timezone.utc)
+    ):
         return "live"
 
     return "upcoming"
 
 
 # ============================================================
-# Deduplication
+# Cross-provider deduplication
 # ============================================================
 
-def normalize_for_key(value):
+def normalized_name(value):
     return " ".join(
-        safe_text(value).lower().replace("-", " ").split()
+        lower(value)
+        .replace("-", " ")
+        .replace("_", " ")
+        .split()
     )
 
 
-def dedupe_key(match):
-    # Provider IDs are strongest when available.
-    if match.get("provider") == "Highlightly" and match.get("provider_id"):
-        return f"h:{match['provider_id']}"
+def cross_provider_key(match):
+    competition = normalized_name(
+        match.get("competition")
+    )
+    t1 = normalized_name(match.get("t1"))
+    t2 = normalized_name(match.get("t2"))
 
-    if match.get("provider") == "CricketData" and match.get("provider_id"):
-        return f"c:{match['provider_id']}"
+    # 30-minute time bucket avoids duplicate records when provider
+    # timestamps differ slightly.
+    start_dt = match.get("start_dt")
 
-    # Cross-provider fallback identity:
-    # same teams + close start time + same canonical competition.
-    timestamp = match.get("timestamp")
-
-    if timestamp is not None:
-        bucket = int(timestamp // (30 * 60))
+    if start_dt:
+        bucket = int(
+            start_dt.timestamp() // (30 * 60)
+        )
     else:
         bucket = "none"
 
-    return "|".join(
-        (
-            normalize_for_key(match.get("canonical")),
-            normalize_for_key(match.get("t1")),
-            normalize_for_key(match.get("t2")),
-            str(bucket),
-        )
+    unordered_teams = tuple(
+        sorted((t1, t2))
+    )
+
+    return (
+        competition,
+        unordered_teams,
+        bucket,
     )
 
 
-def merge_matches(highlightly_matches, cricketdata_matches):
+def merge_provider_matches(highlightly, cricketdata):
     """
-    Prefer Highlightly for the shared match when both providers have
-    a record, because its current match state includes an explicit
-    in-play description.
-
-    If the same match is found only in CricketData, retain it.
+    Highlightly wins when both providers have the same match.
+    CricketData fills gaps that Highlightly does not have.
     """
-    combined = []
-    seen_cross_provider = {}
+    merged = {}
+    order = []
 
-    for item in highlightly_matches:
-        if not item.get("canonical"):
+    for item in highlightly:
+        if not is_relevant_cricket_match(
+            item.get("competition")
+        ):
             continue
 
-        key = dedupe_key(item)
+        key = cross_provider_key(item)
 
-        # provider-specific IDs are unique only within the provider;
-        # keep the broad fallback too.
-        cross_key = (
-            normalize_for_key(item.get("canonical")),
-            normalize_for_key(item.get("t1")),
-            normalize_for_key(item.get("t2")),
-            int(item["timestamp"] // (30 * 60))
-            if item.get("timestamp") is not None
-            else None,
-        )
+        if key not in merged:
+            merged[key] = item
+            order.append(key)
 
-        seen_cross_provider[cross_key] = item
-        combined.append(item)
-
-    for item in cricketdata_matches:
-        if not item.get("canonical"):
+    for item in cricketdata:
+        if not is_relevant_cricket_match(
+            item.get("competition")
+        ):
             continue
 
-        cross_key = (
-            normalize_for_key(item.get("canonical")),
-            normalize_for_key(item.get("t1")),
-            normalize_for_key(item.get("t2")),
-            int(item["timestamp"] // (30 * 60))
-            if item.get("timestamp") is not None
-            else None,
-        )
+        key = cross_provider_key(item)
 
-        if cross_key in seen_cross_provider:
-            # Highlightly already supplies this match.
-            continue
+        if key not in merged:
+            merged[key] = item
+            order.append(key)
 
-        seen_cross_provider[cross_key] = item
-        combined.append(item)
-
-    return combined
+    return [merged[key] for key in order]
 
 
 # ============================================================
@@ -645,34 +856,60 @@ def merge_matches(highlightly_matches, cricketdata_matches):
 # ============================================================
 
 def display_match(match):
-    times = format_time(match.get("start_dt"))
+    bucket = classify_status(match)
+    time_info = format_time(match.get("start_dt"))
 
-    bucket = get_bucket(match)
+    status = match.get("state") or ""
+
+    # Prefer a result report for finished matches.
+    if bucket == "finished" and match.get("report"):
+        status = match.get("report")
+
+    if not status:
+        status = {
+            "live": "Live",
+            "upcoming": "Scheduled",
+            "finished": "Finished",
+        }[bucket]
 
     return {
-        "id": dedupe_key(match),
+        "id": (
+            f"{match.get('provider')}::"
+            f"{match.get('provider_id') or cross_provider_key(match)}"
+        ),
         "provider": match.get("provider"),
-        "competition": match.get("canonical") or "Cricket",
+        "competition": (
+            match.get("competition")
+            or "Cricket"
+        ),
         "title": match.get("title"),
         "series": match.get("series"),
         "match_type": match.get("match_type"),
         "t1": match.get("t1"),
         "t2": match.get("t2"),
-        "t1_score": match.get("t1_score"),
-        "t2_score": match.get("t2_score"),
-        "status": match.get("status_raw") or (
-            "LIVE" if bucket == "live" else "Scheduled"
+        "t1_abbrev": match.get("t1_abbrev"),
+        "t2_abbrev": match.get("t2_abbrev"),
+        "t1_score": (
+            match.get("t1_score")
+            or "Yet to bat"
         ),
-        "venue": match.get("venue"),
-        "day": times["day"],
-        "ist_time": times["ist_time"],
-        "timestamp": times["timestamp"],
+        "t2_score": (
+            match.get("t2_score")
+            or "Yet to bat"
+        ),
+        "t1_info": match.get("t1_info"),
+        "t2_info": match.get("t2_info"),
+        "status": status,
         "bucket": bucket,
+        "venue": match.get("venue"),
+        "day": time_info["day"],
+        "ist_time": time_info["ist_time"],
+        "timestamp": time_info["timestamp"],
     }
 
 
 # ============================================================
-# Main feed
+# Main feed + caching
 # ============================================================
 
 def fetch_global_cricket(force=False):
@@ -685,20 +922,26 @@ def fetch_global_cricket(force=False):
     ):
         return _cache["data"]
 
+    errors = []
+
     highlightly_raw = []
     cricketdata_raw = []
 
-    errors = []
-
+    # Provider 1
     try:
         highlightly_raw, _ = fetch_highlightly()
     except Exception as exc:
-        errors.append(f"Highlightly: {type(exc).__name__}: {exc}")
+        errors.append(
+            f"Highlightly: {type(exc).__name__}: {exc}"
+        )
 
+    # Provider 2
     try:
         cricketdata_raw, _ = fetch_cricketdata()
     except Exception as exc:
-        errors.append(f"CricketData: {type(exc).__name__}: {exc}")
+        errors.append(
+            f"CricketData: {type(exc).__name__}: {exc}"
+        )
 
     highlightly_matches = [
         normalize_highlightly(item)
@@ -712,7 +955,7 @@ def fetch_global_cricket(force=False):
         if isinstance(item, dict)
     ]
 
-    merged = merge_matches(
+    merged = merge_provider_matches(
         highlightly_matches,
         cricketdata_matches,
     )
@@ -723,8 +966,9 @@ def fetch_global_cricket(force=False):
         "finished": [],
         "errors": errors,
         "meta": {
-            "highlightly_count": len(highlightly_raw),
-            "cricketdata_count": len(cricketdata_raw),
+            "highlightly_raw": len(highlightly_raw),
+            "cricketdata_raw": len(cricketdata_raw),
+            "merged_relevant": len(merged),
             "cache_seconds": CACHE_SECONDS,
         },
     }
@@ -733,34 +977,38 @@ def fetch_global_cricket(force=False):
         display = display_match(item)
         result[display["bucket"]].append(display)
 
+    # Live first.
     result["live"].sort(
-        key=lambda x: (
-            x["timestamp"]
-            if x["timestamp"] is not None
+        key=lambda m: (
+            m["timestamp"]
+            if m["timestamp"] is not None
             else 0
         )
     )
 
+    # Upcoming nearest first.
     result["upcoming"].sort(
-        key=lambda x: (
-            x["timestamp"]
-            if x["timestamp"] is not None
+        key=lambda m: (
+            m["timestamp"]
+            if m["timestamp"] is not None
             else float("inf")
         )
     )
 
+    # Finished latest first.
     result["finished"].sort(
-        key=lambda x: (
-            x["timestamp"]
-            if x["timestamp"] is not None
+        key=lambda m: (
+            m["timestamp"]
+            if m["timestamp"] is not None
             else 0
         ),
         reverse=True,
     )
 
-    # Cache even if one provider failed, as long as we got something
-    # from at least one provider.
-    if merged or not _cache["data"]:
+    # Only cache a response if at least one provider returned
+    # usable data. On a total provider outage, keep the last good
+    # response when available.
+    if merged or _cache["data"] is None:
         _cache["data"] = result
         _cache["timestamp"] = now
 
@@ -768,6 +1016,7 @@ def fetch_global_cricket(force=False):
         "CrixData update:",
         f"Highlightly={len(highlightly_raw)},",
         f"CricketData={len(cricketdata_raw)},",
+        f"merged_relevant={len(merged)},",
         f"live={len(result['live'])},",
         f"upcoming={len(result['upcoming'])},",
         f"finished={len(result['finished'])},",
