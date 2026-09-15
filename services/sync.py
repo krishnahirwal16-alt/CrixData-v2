@@ -1,5 +1,4 @@
 import logging
-import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -14,34 +13,30 @@ logger = logging.getLogger(__name__)
 
 class CricketSync:
     """
-    Centralized Highlightly synchronization engine.
+    Centralized provider synchronization engine.
 
-    Design goals:
-    - Avoid alias-by-alias API requests.
-    - Discover leagues in paginated batches.
-    - Resolve CrixData competitions locally.
-    - Save provider competition mappings.
-    - Save provider seasons.
-    - Respect API rate limits.
-    - Keep this layer independent from the frontend.
+    Phase 1:
+    - Resolve selected CrixData competitions
+    - Save provider competition IDs
+    - Save provider seasons
+
+    Design:
+    - Provider API is queried only when sync is explicitly run.
+    - No frontend dependency.
+    - Duplicate database rows are avoided.
+    - Rate-limit failures stop the sync cleanly.
     """
 
     PROVIDER_NAME = "highlightly"
 
-    # Highlightly documents a maximum league limit of 100.
-    LEAGUE_PAGE_SIZE = 100
+    # Keep one provider request per selected competition.
+    # We try the canonical name first, then at most ONE alias
+    # only when the canonical search finds nothing.
+    MAX_LOOKUPS_PER_COMPETITION = 2
 
-    # Safety limit so a broken API response cannot cause
-    # an endless pagination loop.
-    MAX_LEAGUE_PAGES = 20
+    REQUEST_TIMEOUT = 30
 
-    # Small delay between API pages.
-    REQUEST_DELAY_SECONDS = 0.35
-
-    def __init__(
-        self,
-        config: AppConfig,
-    ):
+    def __init__(self, config: AppConfig):
         self.config = config
         self.database = Database()
 
@@ -58,10 +53,8 @@ class CricketSync:
 
         self.session.headers.update(
             {
-                "x-rapidapi-key":
-                    self.api_key,
-                "Accept":
-                    "application/json",
+                "x-rapidapi-key": self.api_key,
+                "Accept": "application/json",
             }
         )
 
@@ -69,54 +62,28 @@ class CricketSync:
     # PUBLIC ENTRY POINT
     # =====================================================
 
-    def sync_selected_competitions(
-        self,
-    ) -> Dict[str, Any]:
-
+    def sync_selected_competitions(self) -> Dict[str, Any]:
         if not self.api_key:
             raise RuntimeError(
                 "HIGHLIGHTLY_API_KEY is not configured."
             )
 
-        # -------------------------------------------------
-        # Fetch the provider league catalog once, in pages.
-        # -------------------------------------------------
-
-        leagues = self._get_all_provider_leagues()
-
-        if not leagues:
-            return {
-                "ok": False,
-                "synced": [],
-                "failed": [
-                    {
-                        "error":
-                            "No Highlightly leagues were returned."
-                    }
-                ],
-                "synced_count": 0,
-                "failed_count": len(COMPETITIONS),
-                "provider_league_count": 0,
-            }
-
         synced = []
         failed = []
 
-        # -------------------------------------------------
-        # Resolve all local competitions against the same
-        # provider catalog. No alias-by-alias API calls.
-        # -------------------------------------------------
+        total_requests = 0
+        rate_limited = False
 
         for competition in COMPETITIONS:
 
             try:
-
-                result = (
-                    self._sync_competition_from_catalog(
-                        competition=competition,
-                        provider_leagues=leagues,
+                result, requests_used = (
+                    self.sync_competition(
+                        competition
                     )
                 )
+
+                total_requests += requests_used
 
                 if result:
                     synced.append(result)
@@ -132,9 +99,31 @@ class CricketSync:
                                     "gender"
                                 ),
                             "error":
-                                "No confident provider league match found.",
+                                "Provider league not confidently resolved.",
                         }
                     )
+
+            except RateLimitError as exc:
+
+                rate_limited = True
+
+                failed.append(
+                    {
+                        "competition":
+                            competition.get(
+                                "canonical_name"
+                            ),
+                        "gender":
+                            competition.get(
+                                "gender"
+                            ),
+                        "error":
+                            str(exc),
+                    }
+                )
+
+                # Do NOT continue hammering the provider.
+                break
 
             except Exception as exc:
 
@@ -162,158 +151,23 @@ class CricketSync:
 
         return {
             "ok": True,
+            "provider": self.PROVIDER_NAME,
             "synced": synced,
             "failed": failed,
             "synced_count": len(synced),
             "failed_count": len(failed),
-            "provider_league_count":
-                len(leagues),
+            "api_requests_used": total_requests,
+            "rate_limited": rate_limited,
         }
 
     # =====================================================
-    # PROVIDER LEAGUE CATALOG
+    # ONE COMPETITION
     # =====================================================
 
-    def _get_all_provider_leagues(
-        self,
-    ) -> List[Dict[str, Any]]:
-
-        all_leagues = []
-
-        offset = 0
-        page_number = 0
-        total_count = None
-
-        while page_number < self.MAX_LEAGUE_PAGES:
-
-            page_number += 1
-
-            payload, headers = (
-                self._get(
-                    "/leagues",
-                    {
-                        "limit":
-                            self.LEAGUE_PAGE_SIZE,
-                        "offset":
-                            offset,
-                    },
-                )
-            )
-
-            page_leagues = (
-                self._extract_leagues(
-                    payload
-                )
-            )
-
-            if not page_leagues:
-                break
-
-            all_leagues.extend(
-                page_leagues
-            )
-
-            pagination = (
-                payload.get(
-                    "pagination"
-                )
-                if isinstance(
-                    payload,
-                    dict,
-                )
-                else {}
-            )
-
-            if isinstance(
-                pagination,
-                dict,
-            ):
-
-                raw_total = pagination.get(
-                    "totalCount"
-                )
-
-                try:
-                    total_count = (
-                        int(raw_total)
-                        if raw_total is not None
-                        else None
-                    )
-                except (
-                    TypeError,
-                    ValueError,
-                ):
-                    total_count = None
-
-            # ---------------------------------------------
-            # Rate-limit logging
-            # ---------------------------------------------
-
-            remaining = (
-                headers.get(
-                    "x-ratelimit-requests-remaining"
-                )
-            )
-
-            limit = (
-                headers.get(
-                    "x-ratelimit-requests-limit"
-                )
-            )
-
-            logger.info(
-                "Highlightly leagues page=%s offset=%s received=%s remaining=%s limit=%s",
-                page_number,
-                offset,
-                len(page_leagues),
-                remaining,
-                limit,
-            )
-
-            # ---------------------------------------------
-            # Stop conditions
-            # ---------------------------------------------
-
-            if total_count is not None:
-
-                if len(all_leagues) >= total_count:
-                    break
-
-            if (
-                len(page_leagues)
-                < self.LEAGUE_PAGE_SIZE
-            ):
-                break
-
-            offset += (
-                self.LEAGUE_PAGE_SIZE
-            )
-
-            if (
-                self.REQUEST_DELAY_SECONDS
-                > 0
-            ):
-                time.sleep(
-                    self.REQUEST_DELAY_SECONDS
-                )
-
-        logger.info(
-            "Highlightly league catalog loaded: %s leagues.",
-            len(all_leagues),
-        )
-
-        return all_leagues
-
-    # =====================================================
-    # COMPETITION RESOLUTION
-    # =====================================================
-
-    def _sync_competition_from_catalog(
+    def sync_competition(
         self,
         competition: Dict[str, Any],
-        provider_leagues:
-            List[Dict[str, Any]],
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Tuple[Optional[Dict[str, Any]], int]:
 
         canonical_name = str(
             competition.get(
@@ -330,38 +184,95 @@ class CricketSync:
         ).strip().lower()
 
         aliases = [
-            str(item).strip()
-            for item in (
+            str(alias).strip()
+            for alias in (
                 competition.get(
                     "aliases"
                 )
                 or []
             )
-            if str(item).strip()
+            if str(alias).strip()
         ]
 
-        provider_league = (
-            self._choose_provider_league(
-                canonical_name=
-                    canonical_name,
-                aliases=
-                    aliases,
-                gender=
-                    gender,
-                provider_leagues=
-                    provider_leagues,
-            )
-        )
+        if not canonical_name:
+            return None, 0
 
-        if not provider_league:
-
-            logger.warning(
-                "No provider league match found for %s (%s).",
+        competition_id = (
+            self._get_local_competition_id(
                 canonical_name,
                 gender,
             )
+        )
 
-            return None
+        if competition_id is None:
+            return None, 0
+
+        # ---------------------------------------------
+        # Search canonical name first.
+        # ---------------------------------------------
+
+        search_terms = [
+            canonical_name
+        ]
+
+        # ---------------------------------------------
+        # At most ONE fallback alias.
+        # Prefer the short name first.
+        # ---------------------------------------------
+
+        short_name = str(
+            competition.get(
+                "short_name"
+            )
+            or ""
+        ).strip()
+
+        if (
+            short_name
+            and normalize(short_name)
+            != normalize(canonical_name)
+        ):
+            search_terms.append(
+                short_name
+            )
+
+        if len(search_terms) < 2:
+            for alias in aliases:
+
+                if (
+                    normalize(alias)
+                    != normalize(canonical_name)
+                ):
+                    search_terms.append(
+                        alias
+                    )
+
+                if len(search_terms) >= 2:
+                    break
+
+        search_terms = search_terms[
+            :self.MAX_LOOKUPS_PER_COMPETITION
+        ]
+
+        provider_league = None
+        requests_used = 0
+
+        for term in search_terms:
+
+            provider_league = (
+                self._find_provider_league(
+                    term,
+                    gender,
+                )
+            )
+
+            requests_used += 1
+
+            if provider_league:
+                break
+
+        if not provider_league:
+            return None, requests_used
 
         provider_id = str(
             provider_league.get(
@@ -378,19 +289,11 @@ class CricketSync:
         ).strip()
 
         if not provider_id:
-            return None
+            return None, requests_used
 
-        competition_id = (
-            self._get_local_competition_id(
-                canonical_name=
-                    canonical_name,
-                gender=
-                    gender,
-            )
-        )
-
-        if competition_id is None:
-            return None
+        # ---------------------------------------------
+        # Save competition → provider mapping.
+        # ---------------------------------------------
 
         self._upsert_competition_source(
             competition_id=
@@ -407,6 +310,10 @@ class CricketSync:
                 ),
         )
 
+        # ---------------------------------------------
+        # Save seasons.
+        # ---------------------------------------------
+
         seasons_saved = (
             self._sync_seasons(
                 competition_id=
@@ -416,70 +323,88 @@ class CricketSync:
             )
         )
 
-        return {
-            "competition_id":
-                competition_id,
+        return (
+            {
+                "competition_id":
+                    competition_id,
 
-            "canonical_name":
-                canonical_name,
+                "canonical_name":
+                    canonical_name,
 
-            "gender":
-                gender,
+                "gender":
+                    gender,
 
-            "provider":
-                self.PROVIDER_NAME,
+                "provider":
+                    self.PROVIDER_NAME,
 
-            "provider_competition_id":
-                provider_id,
+                "provider_competition_id":
+                    provider_id,
 
-            "provider_name":
-                provider_name,
+                "provider_name":
+                    provider_name,
 
-            "seasons_saved":
-                seasons_saved,
-        }
+                "seasons_saved":
+                    seasons_saved,
+            },
+            requests_used,
+        )
 
     # =====================================================
-    # LOCAL PROVIDER MATCHING
+    # PROVIDER LEAGUE SEARCH
     # =====================================================
 
-    def _choose_provider_league(
+    def _find_provider_league(
         self,
-        canonical_name: str,
-        aliases: List[str],
+        search_term: str,
         gender: str,
-        provider_leagues:
-            List[Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
 
-        search_names = [
-            canonical_name,
-            *aliases,
-        ]
+        payload, _headers = self._get(
+            "/leagues",
+            {
+                "leagueName":
+                    search_term,
+                "limit":
+                    100,
+                "offset":
+                    0,
+            },
+        )
 
-        normalized_targets = []
-
-        for value in search_names:
-
-            key = normalize(
-                value
+        leagues = (
+            self._extract_leagues(
+                payload
             )
+        )
 
-            if (
-                key
-                and key not in normalized_targets
-            ):
-                normalized_targets.append(
-                    key
-                )
-
-        if not normalized_targets:
+        if not leagues:
             return None
 
-        best_candidate = None
+        return self._choose_best_league(
+            leagues,
+            search_term,
+            gender,
+        )
+
+    # =====================================================
+    # BEST PROVIDER LEAGUE
+    # =====================================================
+
+    def _choose_best_league(
+        self,
+        leagues: List[Dict[str, Any]],
+        search_term: str,
+        gender: str,
+    ) -> Optional[Dict[str, Any]]:
+
+        target = normalize(
+            search_term
+        )
+
+        best = None
         best_score = 0
 
-        for league in provider_leagues:
+        for league in leagues:
 
             provider_name = normalize(
                 league.get(
@@ -491,25 +416,10 @@ class CricketSync:
             if not provider_name:
                 continue
 
-            score = (
-                self._match_score(
-                    provider_name=
-                        provider_name,
-                    target_names=
-                        normalized_targets,
-                )
+            score = self._name_score(
+                provider_name,
+                target,
             )
-
-            if score <= 0:
-                continue
-
-            # ---------------------------------------------
-            # Gender preference.
-            #
-            # Provider responses may not always expose
-            # gender, so this is a preference, not a hard
-            # requirement.
-            # ---------------------------------------------
 
             provider_gender = normalize(
                 str(
@@ -526,104 +436,87 @@ class CricketSync:
                     "women",
                     "female",
                 ):
-
-                    if "women" in provider_gender:
-                        score += 8
+                    if (
+                        "women"
+                        in provider_gender
+                        or "female"
+                        in provider_gender
+                    ):
+                        score += 20
 
                 elif gender in (
                     "men",
                     "male",
                 ):
-
                     if (
                         "men"
                         in provider_gender
+                        or "male"
+                        in provider_gender
                     ):
-                        score += 8
+                        score += 20
 
             if score > best_score:
 
                 best_score = score
-                best_candidate = league
+                best = league
 
-        return best_candidate
+        # Require a reasonably strong name match.
+        if best_score < 60:
+            return None
+
+        return best
+
+    # =====================================================
+    # NAME MATCH
+    # =====================================================
 
     @staticmethod
-    def _match_score(
+    def _name_score(
         provider_name: str,
-        target_names: List[str],
+        target: str,
     ) -> int:
 
-        best = 0
+        if provider_name == target:
+            return 100
+
+        if (
+            provider_name in target
+            or target in provider_name
+        ):
+            return 85
 
         provider_tokens = set(
             provider_name.split()
         )
 
-        for target in target_names:
+        target_tokens = set(
+            target.split()
+        )
 
-            if not target:
-                continue
+        if not provider_tokens or not target_tokens:
+            return 0
 
-            # Exact normalized match.
-            if provider_name == target:
-                best = max(
-                    best,
-                    100,
-                )
-                continue
+        overlap = len(
+            provider_tokens
+            & target_tokens
+        )
 
-            target_tokens = set(
-                target.split()
+        ratio = (
+            overlap
+            / max(
+                len(target_tokens),
+                1,
             )
+        )
 
-            if not target_tokens:
-                continue
+        if ratio >= 0.75:
+            return 75
 
-            # Provider contains target.
-            if target in provider_name:
-                best = max(
-                    best,
-                    85,
-                )
+        if ratio >= 0.50:
+            return 60
 
-            # Target contains provider name.
-            if provider_name in target:
-                best = max(
-                    best,
-                    80,
-                )
-
-            # Token overlap.
-            overlap = len(
-                provider_tokens
-                & target_tokens
-            )
-
-            if overlap:
-
-                ratio = (
-                    overlap
-                    / max(
-                        len(
-                            target_tokens
-                        ),
-                        1,
-                    )
-                )
-
-                if ratio >= 0.75:
-                    best = max(
-                        best,
-                        70,
-                    )
-                elif ratio >= 0.5:
-                    best = max(
-                        best,
-                        55,
-                    )
-
-        return best
+        return 0
 
     # =====================================================
     # LOCAL COMPETITION
@@ -658,7 +551,7 @@ class CricketSync:
         )
 
     # =====================================================
-    # COMPETITION SOURCE UPSERT
+    # COMPETITION SOURCE
     # =====================================================
 
     def _upsert_competition_source(
@@ -667,8 +560,7 @@ class CricketSync:
         provider: str,
         provider_competition_id: str,
         provider_name: str,
-        provider_logo_url:
-            Optional[str],
+        provider_logo_url: Optional[str],
     ):
 
         self.database.execute(
@@ -711,17 +603,14 @@ class CricketSync:
         )
 
     # =====================================================
-    # SEASON SYNC
+    # SEASONS
     # =====================================================
 
     def _sync_seasons(
         self,
         competition_id: int,
-        provider_league:
-            Dict[str, Any],
+        provider_league: Dict[str, Any],
     ) -> int:
-
-        saved = 0
 
         seasons = (
             provider_league.get(
@@ -729,6 +618,8 @@ class CricketSync:
             )
             or []
         )
+
+        saved = 0
 
         for item in seasons:
 
@@ -739,28 +630,18 @@ class CricketSync:
                 continue
 
             provider_season_id = (
-                item.get(
-                    "id"
-                )
-                or item.get(
-                    "season"
-                )
+                item.get("id")
+                or item.get("season")
             )
 
             season_value = (
-                item.get(
-                    "season"
-                )
-                or item.get(
-                    "name"
-                )
+                item.get("season")
+                or item.get("name")
             )
 
             if (
-                provider_season_id
-                is None
-                and season_value
-                is None
+                provider_season_id is None
+                and season_value is None
             ):
                 continue
 
@@ -865,7 +746,7 @@ class CricketSync:
         return season_id
 
     # =====================================================
-    # HTTP REQUEST
+    # HTTP
     # =====================================================
 
     def _get(
@@ -885,33 +766,43 @@ class CricketSync:
         response = self.session.get(
             url,
             params=params,
-            timeout=30,
+            timeout=self.REQUEST_TIMEOUT,
         )
 
-        # -------------------------------------------------
-        # Handle rate limiting explicitly.
-        # -------------------------------------------------
+        headers = dict(
+            response.headers
+        )
+
+        # ---------------------------------------------
+        # Rate limit
+        # ---------------------------------------------
 
         if response.status_code == 429:
 
-            remaining = response.headers.get(
-                "x-ratelimit-requests-remaining"
+            remaining = (
+                headers.get(
+                    "x-ratelimit-requests-remaining"
+                )
             )
 
-            limit = response.headers.get(
-                "x-ratelimit-requests-limit"
+            limit = (
+                headers.get(
+                    "x-ratelimit-requests-limit"
+                )
             )
 
-            retry_after = response.headers.get(
-                "Retry-After"
+            retry_after = (
+                headers.get(
+                    "Retry-After"
+                )
             )
 
-            raise RuntimeError(
+            raise RateLimitError(
                 "Highlightly rate limit reached "
                 f"(remaining={remaining}, "
                 f"limit={limit}, "
                 f"retry_after={retry_after}). "
-                "Do not repeatedly retry until the quota resets."
+                "Stop now and retry only after the quota resets."
             )
 
         response.raise_for_status()
@@ -922,19 +813,12 @@ class CricketSync:
             payload,
             dict,
         ):
-            return {}, dict(
-                response.headers
-            )
+            return {}, headers
 
-        return (
-            payload,
-            dict(
-                response.headers
-            ),
-        )
+        return payload, headers
 
     # =====================================================
-    # RESPONSE HELPERS
+    # RESPONSE PARSER
     # =====================================================
 
     @staticmethod
@@ -976,16 +860,20 @@ class CricketSync:
         league: Dict[str, Any],
     ) -> Optional[str]:
 
-        value = league.get(
+        logo = league.get(
             "logo"
         )
 
-        if value:
+        if logo:
             return str(
-                value
+                logo
             )
 
         return None
+
+
+class RateLimitError(Exception):
+    """Provider API rate-limit exception."""
 
 
 # =========================================================
