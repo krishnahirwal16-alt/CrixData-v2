@@ -8,26 +8,34 @@ class CricketSearch:
     """
     Database-first cricket search service.
 
-    Search order:
-    1. Competition aliases
-    2. Competition names
-    3. Season names
-    4. Team aliases/names
-    5. Match/team/competition data
+    External cricket providers are NOT called here.
 
-    This service does NOT call external providers.
-    Therefore normal search uses zero API requests.
+    Search sources:
+    - competition canonical names
+    - competition short names
+    - competition aliases
+    - seasons
+    - team canonical names
+    - team short names
+    - team aliases
+    - saved matches
     """
 
     def __init__(self):
         self.database = Database()
 
     # =====================================================
-    # MAIN SEARCH
+    # PUBLIC SEARCH
     # =====================================================
 
-    def search(self, query: str) -> Dict[str, Any]:
-        query = text(query).strip()
+    def search(
+        self,
+        query: str,
+    ) -> Dict[str, Any]:
+
+        query = text(
+            query
+        ).strip()
 
         if not query:
             return {
@@ -40,48 +48,42 @@ class CricketSearch:
                 "matches": [],
             }
 
-        normalized = self._normalize(query)
-
-        suggestions = (
-            self.get_suggestions(normalized)
-        )
-
-        competitions = (
-            self._search_competitions(
-                normalized
-            )
-        )
-
-        seasons = (
-            self._search_seasons(
-                normalized
-            )
-        )
-
-        teams = (
-            self._search_teams(
-                normalized
-            )
-        )
-
-        matches = (
-            self._search_matches(
-                normalized
-            )
+        normalized = self._normalize(
+            query
         )
 
         return {
             "ok": True,
             "query": query,
-            "suggestions": suggestions,
-            "competitions": competitions,
-            "seasons": seasons,
-            "teams": teams,
-            "matches": matches,
+
+            "suggestions":
+                self.get_suggestions(
+                    normalized
+                ),
+
+            "competitions":
+                self._search_competitions(
+                    normalized
+                ),
+
+            "seasons":
+                self._search_seasons(
+                    normalized
+                ),
+
+            "teams":
+                self._search_teams(
+                    normalized
+                ),
+
+            "matches":
+                self._search_matches(
+                    normalized
+                ),
         }
 
     # =====================================================
-    # AUTOCOMPLETE
+    # AUTOCOMPLETE / SUGGESTIONS
     # =====================================================
 
     def get_suggestions(
@@ -93,60 +95,75 @@ class CricketSearch:
         if not query:
             return []
 
-        suggestions = []
+        suggestions: List[
+            Dict[str, Any]
+        ] = []
 
-        # ---------------------------------------------
+        # -------------------------------------------------
         # Competition aliases
-        # ---------------------------------------------
+        # -------------------------------------------------
 
-        competition_rows = self.database.execute(
-            """
-            SELECT
-                c.id,
-                c.canonical_name,
-                c.short_name,
-                c.gender,
-                ca.alias
-            FROM competition_aliases ca
-            JOIN competitions c
-                ON c.id = ca.competition_id
-            WHERE ca.normalized_alias LIKE %s
-            ORDER BY
-                CASE
-                    WHEN ca.normalized_alias = %s
-                    THEN 0
-                    WHEN ca.normalized_alias LIKE %s
-                    THEN 1
-                    ELSE 2
-                END,
-                c.canonical_name
-            LIMIT %s;
-            """,
-            (
-                query + "%",
-                query,
-                query + "%",
-                limit,
-            ),
-            fetch=True,
+        competition_alias_rows = (
+            self.database.execute(
+                """
+                SELECT
+                    c.id,
+                    c.canonical_name,
+                    c.short_name,
+                    c.gender,
+                    ca.alias
+                FROM competition_aliases ca
+                JOIN competitions c
+                    ON c.id = ca.competition_id
+                WHERE ca.normalized_alias LIKE %s
+                ORDER BY
+                    CASE
+                        WHEN ca.normalized_alias = %s
+                            THEN 0
+                        WHEN ca.normalized_alias LIKE %s
+                            THEN 1
+                        ELSE 2
+                    END,
+                    c.canonical_name
+                LIMIT %s;
+                """,
+                (
+                    query + "%",
+                    query,
+                    query + "%",
+                    limit,
+                ),
+                fetch=True,
+            )
         )
 
-        for row in competition_rows:
+        for row in competition_alias_rows:
 
             suggestions.append(
                 {
-                    "type": "competition",
-                    "id": row[0],
-                    "name": row[1],
-                    "short_name": row[2],
-                    "gender": row[3],
-                    "matched_as": row[4],
+                    "type":
+                        "competition",
+
+                    "id":
+                        row[0],
+
+                    "name":
+                        row[1],
+
+                    "short_name":
+                        row[2],
+
+                    "gender":
+                        row[3],
+
+                    "matched_as":
+                        row[4],
                 }
             )
 
-        # ---------------------------------------------
-        # Competition canonical names
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # Competition names / short names
+        # -------------------------------------------------
 
         remaining = max(
             0,
@@ -155,38 +172,51 @@ class CricketSearch:
 
         if remaining:
 
-            competition_rows = self.database.execute(
-                """
-                SELECT
-                    id,
-                    canonical_name,
-                    short_name,
-                    gender
-                FROM competitions
-                WHERE LOWER(canonical_name)
-                      LIKE %s
-                   OR LOWER(short_name)
-                      LIKE %s
-                ORDER BY canonical_name
-                LIMIT %s;
-                """,
-                (
-                    query + "%",
-                    query + "%",
-                    remaining,
-                ),
-                fetch=True,
+            competition_rows = (
+                self.database.execute(
+                    """
+                    SELECT
+                        id,
+                        canonical_name,
+                        short_name,
+                        gender
+                    FROM competitions
+                    WHERE
+                        is_active = TRUE
+                        AND (
+                            LOWER(canonical_name)
+                                LIKE %s
+                            OR LOWER(
+                                COALESCE(
+                                    short_name,
+                                    ''
+                                )
+                            )
+                                LIKE %s
+                        )
+                    ORDER BY
+                        canonical_name
+                    LIMIT %s;
+                    """,
+                    (
+                        query + "%",
+                        query + "%",
+                        remaining,
+                    ),
+                    fetch=True,
+                )
             )
 
-            existing_ids = {
+            existing_competitions = {
                 item["id"]
                 for item in suggestions
-                if item["type"] == "competition"
+                if item["type"]
+                == "competition"
             }
 
             for row in competition_rows:
 
-                if row[0] in existing_ids:
+                if row[0] in existing_competitions:
                     continue
 
                 suggestions.append(
@@ -208,9 +238,9 @@ class CricketSearch:
                     }
                 )
 
-        # ---------------------------------------------
-        # Teams
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # Team names / short names
+        # -------------------------------------------------
 
         remaining = max(
             0,
@@ -219,38 +249,122 @@ class CricketSearch:
 
         if remaining:
 
-            team_rows = self.database.execute(
-                """
-                SELECT
-                    id,
-                    name,
-                    short_name,
-                    gender
-                FROM teams
-                WHERE LOWER(name)
-                      LIKE %s
-                   OR LOWER(COALESCE(short_name, ''))
-                      LIKE %s
-                ORDER BY name
-                LIMIT %s;
-                """,
-                (
-                    query + "%",
-                    query + "%",
-                    remaining,
-                ),
-                fetch=True,
+            team_rows = (
+                self.database.execute(
+                    """
+                    SELECT
+                        t.id,
+                        t.canonical_name,
+                        t.short_name,
+                        t.gender
+                    FROM teams t
+                    WHERE
+                        LOWER(t.canonical_name)
+                            LIKE %s
+                        OR LOWER(
+                            COALESCE(
+                                t.short_name,
+                                ''
+                            )
+                        )
+                            LIKE %s
+                    ORDER BY
+                        t.canonical_name
+                    LIMIT %s;
+                    """,
+                    (
+                        query + "%",
+                        query + "%",
+                        remaining,
+                    ),
+                    fetch=True,
+                )
             )
 
             for row in team_rows:
 
                 suggestions.append(
                     {
-                        "type": "team",
-                        "id": row[0],
-                        "name": row[1],
-                        "short_name": row[2],
-                        "gender": row[3],
+                        "type":
+                            "team",
+
+                        "id":
+                            row[0],
+
+                        "name":
+                            row[1],
+
+                        "short_name":
+                            row[2],
+
+                        "gender":
+                            row[3],
+                    }
+                )
+
+        # -------------------------------------------------
+        # Team aliases
+        # -------------------------------------------------
+
+        remaining = max(
+            0,
+            limit - len(suggestions),
+        )
+
+        if remaining:
+
+            team_alias_rows = (
+                self.database.execute(
+                    """
+                    SELECT
+                        t.id,
+                        t.canonical_name,
+                        t.short_name,
+                        t.gender,
+                        ta.alias
+                    FROM team_aliases ta
+                    JOIN teams t
+                        ON t.id = ta.team_id
+                    WHERE ta.normalized_alias LIKE %s
+                    ORDER BY
+                        CASE
+                            WHEN ta.normalized_alias = %s
+                                THEN 0
+                            ELSE 1
+                        END,
+                        t.canonical_name
+                    LIMIT %s;
+                    """,
+                    (
+                        query + "%",
+                        query,
+                        remaining,
+                    ),
+                    fetch=True,
+                )
+            )
+
+            for row in team_alias_rows:
+
+                suggestions.append(
+                    {
+                        "type":
+                            "team",
+
+                        "id":
+                            row[0],
+
+                        "name":
+                            row[1],
+
+                        "short_name":
+                            row[2],
+
+                        "gender":
+                            row[3],
+
+                        "matched_as":
+                            row[4],
                     }
                 )
 
@@ -278,32 +392,47 @@ class CricketSearch:
                 c.logo_url
             FROM competitions c
             LEFT JOIN competition_aliases ca
-                ON ca.competition_id = c.id
+                ON ca.competition_id =
+                   c.id
             WHERE
                 c.is_active = TRUE
                 AND (
-                    LOWER(c.canonical_name)
-                        LIKE %s
-                    OR LOWER(
-                        COALESCE(c.short_name, '')
+                    LOWER(
+                        c.canonical_name
                     )
                         LIKE %s
+
+                    OR LOWER(
+                        COALESCE(
+                            c.short_name,
+                            ''
+                        )
+                    )
+                        LIKE %s
+
                     OR ca.normalized_alias
                         LIKE %s
                 )
             ORDER BY
                 CASE
-                    WHEN LOWER(c.canonical_name)
-                        = %s
-                    THEN 0
                     WHEN LOWER(
-                        COALESCE(c.short_name, '')
-                    )
-                        = %s
-                    THEN 0
+                        c.canonical_name
+                    ) = %s
+                        THEN 0
+
+                    WHEN LOWER(
+                        COALESCE(
+                            c.short_name,
+                            ''
+                        )
+                    ) = %s
+                        THEN 0
+
                     ELSE 1
                 END,
+
                 c.canonical_name
+
             LIMIT 50;
             """,
             (
@@ -318,14 +447,29 @@ class CricketSearch:
 
         return [
             {
-                "id": row[0],
-                "name": row[1],
-                "short_name": row[2],
-                "gender": row[3],
-                "competition_type": row[4],
-                "country_name": row[5],
-                "country_code": row[6],
-                "logo_url": row[7],
+                "id":
+                    row[0],
+
+                "name":
+                    row[1],
+
+                "short_name":
+                    row[2],
+
+                "gender":
+                    row[3],
+
+                "competition_type":
+                    row[4],
+
+                "country_name":
+                    row[5],
+
+                "country_code":
+                    row[6],
+
+                "logo_url":
+                    row[7],
             }
             for row in rows
         ]
@@ -347,20 +491,35 @@ class CricketSearch:
                 c.canonical_name,
                 c.short_name,
                 s.season_name,
-                s.provider_season_id
+                s.provider_season_id,
+                s.season_start,
+                s.season_end,
+                s.is_current
             FROM seasons s
             JOIN competitions c
                 ON c.id = s.competition_id
-            WHERE LOWER(s.season_name)
-                  LIKE %s
-               OR LOWER(c.canonical_name)
-                  LIKE %s
-               OR LOWER(
-                    COALESCE(c.short_name, '')
-                  )
-                  LIKE %s
+            WHERE
+                LOWER(
+                    s.season_name
+                )
+                    LIKE %s
+
+                OR LOWER(
+                    c.canonical_name
+                )
+                    LIKE %s
+
+                OR LOWER(
+                    COALESCE(
+                        c.short_name,
+                        ''
+                    )
+                )
+                    LIKE %s
+
             ORDER BY
                 s.season_name DESC
+
             LIMIT 100;
             """,
             (
@@ -373,12 +532,40 @@ class CricketSearch:
 
         return [
             {
-                "id": row[0],
-                "competition_id": row[1],
-                "competition_name": row[2],
-                "competition_short_name": row[3],
-                "season_name": row[4],
-                "provider_season_id": row[5],
+                "id":
+                    row[0],
+
+                "competition_id":
+                    row[1],
+
+                "competition_name":
+                    row[2],
+
+                "competition_short_name":
+                    row[3],
+
+                "season_name":
+                    row[4],
+
+                "provider_season_id":
+                    row[5],
+
+                "season_start":
+                    (
+                        row[6].isoformat()
+                        if row[6]
+                        else None
+                    ),
+
+                "season_end":
+                    (
+                        row[7].isoformat()
+                        if row[7]
+                        else None
+                    ),
+
+                "is_current":
+                    row[8],
             }
             for row in rows
         ]
@@ -396,33 +583,49 @@ class CricketSearch:
             """
             SELECT DISTINCT
                 t.id,
-                t.name,
+                t.canonical_name,
                 t.short_name,
+                t.abbreviation,
                 t.gender,
                 t.country_name,
                 t.country_code,
-                t.logo_url
+                t.logo_url,
+                t.flag_url
             FROM teams t
             LEFT JOIN team_aliases ta
                 ON ta.team_id = t.id
             WHERE
-                LOWER(t.name)
-                    LIKE %s
-                OR LOWER(
-                    COALESCE(t.short_name, '')
+                LOWER(
+                    t.canonical_name
                 )
                     LIKE %s
+
                 OR LOWER(
                     COALESCE(
-                        ta.alias,
+                        t.short_name,
                         ''
                     )
                 )
                     LIKE %s
-            ORDER BY t.name
+
+                OR LOWER(
+                    COALESCE(
+                        t.abbreviation,
+                        ''
+                    )
+                )
+                    LIKE %s
+
+                OR ta.normalized_alias
+                    LIKE %s
+
+            ORDER BY
+                t.canonical_name
+
             LIMIT 100;
             """,
             (
+                "%" + query + "%",
                 "%" + query + "%",
                 "%" + query + "%",
                 "%" + query + "%",
@@ -432,13 +635,32 @@ class CricketSearch:
 
         return [
             {
-                "id": row[0],
-                "name": row[1],
-                "short_name": row[2],
-                "gender": row[3],
-                "country_name": row[4],
-                "country_code": row[5],
-                "logo_url": row[6],
+                "id":
+                    row[0],
+
+                "name":
+                    row[1],
+
+                "short_name":
+                    row[2],
+
+                "abbreviation":
+                    row[3],
+
+                "gender":
+                    row[4],
+
+                "country_name":
+                    row[5],
+
+                "country_code":
+                    row[6],
+
+                "logo_url":
+                    row[7],
+
+                "flag_url":
+                    row[8],
             }
             for row in rows
         ]
@@ -458,48 +680,74 @@ class CricketSearch:
                 m.id,
                 m.provider_match_id,
                 m.provider,
-                m.match_status,
+                m.status,
+                m.status_text,
+                m.result_text,
                 m.start_time,
-                m.team1_id,
-                t1.name,
-                t1.logo_url,
-                m.team2_id,
-                t2.name,
-                t2.logo_url,
+
+                m.home_team_id,
+                home_team.canonical_name,
+                home_team.short_name,
+                home_team.logo_url,
+                home_team.flag_url,
+
+                m.away_team_id,
+                away_team.canonical_name,
+                away_team.short_name,
+                away_team.logo_url,
+                away_team.flag_url,
+
                 m.competition_id,
                 c.canonical_name,
                 c.short_name,
+
                 m.season_id,
                 s.season_name,
+
                 m.venue_id,
-                v.name,
+                v.canonical_name,
                 v.city,
-                v.country_name
+                v.region,
+                v.country_name,
+                v.country_code
+
             FROM matches m
 
-            LEFT JOIN teams t1
-                ON t1.id = m.team1_id
+            LEFT JOIN teams home_team
+                ON home_team.id =
+                   m.home_team_id
 
-            LEFT JOIN teams t2
-                ON t2.id = m.team2_id
+            LEFT JOIN teams away_team
+                ON away_team.id =
+                   m.away_team_id
 
             LEFT JOIN competitions c
-                ON c.id = m.competition_id
+                ON c.id =
+                   m.competition_id
 
             LEFT JOIN seasons s
-                ON s.id = m.season_id
+                ON s.id =
+                   m.season_id
 
             LEFT JOIN venues v
-                ON v.id = m.venue_id
+                ON v.id =
+                   m.venue_id
 
             WHERE
+
                 LOWER(
-                    COALESCE(t1.name, '')
+                    COALESCE(
+                        home_team.canonical_name,
+                        ''
+                    )
                 )
                     LIKE %s
 
                 OR LOWER(
-                    COALESCE(t2.name, '')
+                    COALESCE(
+                        away_team.canonical_name,
+                        ''
+                    )
                 )
                     LIKE %s
 
@@ -529,7 +777,15 @@ class CricketSearch:
 
                 OR LOWER(
                     COALESCE(
-                        v.name,
+                        v.canonical_name,
+                        ''
+                    )
+                )
+                    LIKE %s
+
+                OR LOWER(
+                    COALESCE(
+                        v.city,
                         ''
                     )
                 )
@@ -547,6 +803,7 @@ class CricketSearch:
                 "%" + query + "%",
                 "%" + query + "%",
                 "%" + query + "%",
+                "%" + query + "%",
             ),
             fetch=True,
         )
@@ -557,45 +814,108 @@ class CricketSearch:
 
             results.append(
                 {
-                    "id": row[0],
-                    "provider_match_id": row[1],
-                    "provider": row[2],
-                    "status": row[3],
-                    "start_time": (
-                        row[4].isoformat()
-                        if row[4]
-                        else None
-                    ),
+                    "id":
+                        row[0],
 
-                    "team1": {
-                        "id": row[5],
-                        "name": row[6],
-                        "logo_url": row[7],
-                    },
+                    "provider_match_id":
+                        row[1],
 
-                    "team2": {
-                        "id": row[8],
-                        "name": row[9],
-                        "logo_url": row[10],
-                    },
+                    "provider":
+                        row[2],
 
-                    "competition": {
-                        "id": row[11],
-                        "name": row[12],
-                        "short_name": row[13],
-                    },
+                    "status":
+                        row[3],
 
-                    "season": {
-                        "id": row[14],
-                        "name": row[15],
-                    },
+                    "status_text":
+                        row[4],
 
-                    "venue": {
-                        "id": row[16],
-                        "name": row[17],
-                        "city": row[18],
-                        "country": row[19],
-                    },
+                    "result_text":
+                        row[5],
+
+                    "start_time":
+                        (
+                            row[6].isoformat()
+                            if row[6]
+                            else None
+                        ),
+
+                    "home_team":
+                        {
+                            "id":
+                                row[7],
+
+                            "name":
+                                row[8],
+
+                            "short_name":
+                                row[9],
+
+                            "logo_url":
+                                row[10],
+
+                            "flag_url":
+                                row[11],
+                        },
+
+                    "away_team":
+                        {
+                            "id":
+                                row[12],
+
+                            "name":
+                                row[13],
+
+                            "short_name":
+                                row[14],
+
+                            "logo_url":
+                                row[15],
+
+                            "flag_url":
+                                row[16],
+                        },
+
+                    "competition":
+                        {
+                            "id":
+                                row[17],
+
+                            "name":
+                                row[18],
+
+                            "short_name":
+                                row[19],
+                        },
+
+                    "season":
+                        {
+                            "id":
+                                row[20],
+
+                            "name":
+                                row[21],
+                        },
+
+                    "venue":
+                        {
+                            "id":
+                                row[22],
+
+                            "name":
+                                row[23],
+
+                            "city":
+                                row[24],
+
+                            "region":
+                                row[25],
+
+                            "country":
+                                row[26],
+
+                            "country_code":
+                                row[27],
+                        },
                 }
             )
 
@@ -606,7 +926,12 @@ class CricketSearch:
     # =====================================================
 
     @staticmethod
-    def _normalize(value: str) -> str:
+    def _normalize(
+        value: str,
+    ) -> str:
+
         return " ".join(
-            value.lower().strip().split()
+            value.lower()
+            .strip()
+            .split()
         )
