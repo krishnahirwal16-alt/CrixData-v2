@@ -4,8 +4,13 @@ from flask import Flask, jsonify, render_template, request
 
 from config import AppConfig
 from database import Database
+from seed_data import seed_competitions
 from services.aggregator import CricketAggregator
 
+
+# =========================================================
+# LOGGING
+# =========================================================
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,10 +21,17 @@ logger = logging.getLogger(
 )
 
 
+# =========================================================
+# APP
+# =========================================================
+
 app = Flask(__name__)
 
 config = AppConfig.from_env()
-aggregator = CricketAggregator(config)
+
+aggregator = CricketAggregator(
+    config
+)
 
 
 # =========================================================
@@ -27,18 +39,36 @@ aggregator = CricketAggregator(config)
 # =========================================================
 
 def initialize_database():
+    """
+    Initialize the PostgreSQL schema and seed the
+    centralized competition catalog.
+
+    Both operations are designed to be safe to run
+    repeatedly.
+    """
+
     try:
         database = Database()
 
+        # Create/update required tables.
         database.initialize_schema(
             "schema.sql"
         )
 
         logger.info(
-            "PostgreSQL schema initialized successfully."
+            "PostgreSQL schema initialized."
+        )
+
+        # Insert competitions + aliases.
+        seeded = seed_competitions()
+
+        logger.info(
+            "Competition catalog initialized: %s competitions.",
+            seeded,
         )
 
     except Exception as exc:
+
         logger.exception(
             "Database initialization failed: %s",
             exc,
@@ -76,6 +106,7 @@ def matches_api():
 
 @app.get("/api/search")
 def search_api():
+
     query = request.args.get(
         "q",
         "",
@@ -83,7 +114,9 @@ def search_api():
     ).strip()
 
     return jsonify(
-        aggregator.search(query)
+        aggregator.search(
+            query
+        )
     )
 
 
@@ -97,6 +130,7 @@ def search_api():
 def match_details_api(
     match_id: str,
 ):
+
     return jsonify(
         aggregator.get_match_details(
             match_id
@@ -105,7 +139,7 @@ def match_details_api(
 
 
 # =========================================================
-# HEALTH + DATABASE CHECK
+# HEALTH CHECK
 # =========================================================
 
 @app.get("/health")
@@ -124,12 +158,20 @@ def health():
 
     found_tables = []
 
+    competition_count = None
+    alias_count = None
+
     database_status = "error"
 
     try:
+
         database = Database()
 
-        result = database.execute(
+        # ---------------------------------------------
+        # Check required tables
+        # ---------------------------------------------
+
+        table_result = database.execute(
             """
             SELECT table_name
             FROM information_schema.tables
@@ -145,8 +187,46 @@ def health():
 
         found_tables = [
             row[0]
-            for row in result
+            for row in table_result
         ]
+
+        # ---------------------------------------------
+        # Check competition catalog
+        # ---------------------------------------------
+
+        competition_result = database.execute(
+            """
+            SELECT COUNT(*)
+            FROM competitions;
+            """,
+            fetch=True,
+        )
+
+        if competition_result:
+            competition_count = (
+                competition_result[0][0]
+            )
+
+        # ---------------------------------------------
+        # Check alias catalog
+        # ---------------------------------------------
+
+        alias_result = database.execute(
+            """
+            SELECT COUNT(*)
+            FROM competition_aliases;
+            """,
+            fetch=True,
+        )
+
+        if alias_result:
+            alias_count = (
+                alias_result[0][0]
+            )
+
+        # ---------------------------------------------
+        # Overall database status
+        # ---------------------------------------------
 
         database_status = (
             "ok"
@@ -156,6 +236,7 @@ def health():
         )
 
     except Exception as exc:
+
         logger.exception(
             "Database health check failed: %s",
             exc,
@@ -165,10 +246,23 @@ def health():
         {
             "ok": True,
             "service": "CrixData",
+
             "database": database_status,
-            "required_tables": required_tables,
-            "found_tables": found_tables,
-            "table_count": len(found_tables),
+
+            "required_tables":
+                required_tables,
+
+            "found_tables":
+                found_tables,
+
+            "table_count":
+                len(found_tables),
+
+            "competition_count":
+                competition_count,
+
+            "competition_alias_count":
+                alias_count,
         }
     )
 
@@ -178,8 +272,11 @@ def health():
 # =========================================================
 
 if __name__ == "__main__":
+
     app.run(
         host="0.0.0.0",
-        port=int(config.port),
+        port=int(
+            config.port
+        ),
         debug=False,
     )
