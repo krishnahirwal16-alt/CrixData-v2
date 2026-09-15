@@ -364,3 +364,144 @@ CREATE TRIGGER match_scores_updated_at
 BEFORE UPDATE ON match_scores
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
+
+
+-- =========================================================
+-- PROVIDER MAPPINGS
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS competition_sources (
+    id BIGSERIAL PRIMARY KEY,
+
+    competition_id BIGINT NOT NULL
+        REFERENCES competitions(id)
+        ON DELETE CASCADE,
+
+    provider VARCHAR(50) NOT NULL,
+
+    provider_competition_id VARCHAR(150) NOT NULL,
+
+    provider_name VARCHAR(200),
+
+    provider_logo_url TEXT,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    UNIQUE (
+        provider,
+        provider_competition_id
+    ),
+
+    UNIQUE (
+        competition_id,
+        provider
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_competition_sources_competition
+    ON competition_sources(competition_id);
+
+CREATE INDEX IF NOT EXISTS idx_competition_sources_provider
+    ON competition_sources(provider);
+
+
+-- =========================================================
+-- SEASON PROVIDER MAPPINGS
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS season_sources (
+    id BIGSERIAL PRIMARY KEY,
+
+    season_id BIGINT NOT NULL
+        REFERENCES seasons(id)
+        ON DELETE CASCADE,
+
+    provider VARCHAR(50) NOT NULL,
+
+    provider_season_id VARCHAR(150) NOT NULL,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    UNIQUE (
+        provider,
+        provider_season_id
+    ),
+
+    UNIQUE (
+        season_id,
+        provider
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_season_sources_season
+    ON season_sources(season_id);
+
+
+-- =========================================================
+-- TEAM PROVIDER MAPPINGS
+-- =========================================================
+
+CREATE TABLE IF NOT EXISTS team_sources (
+    id BIGSERIAL PRIMARY KEY,
+
+    team_id BIGINT NOT NULL
+        REFERENCES teams(id)
+        ON DELETE CASCADE,
+
+    provider VARCHAR(50) NOT NULL,
+
+    provider_team_id VARCHAR(150) NOT NULL,
+
+    provider_name VARCHAR(200),
+
+    provider_logo_url TEXT,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    UNIQUE (
+        provider,
+        provider_team_id
+    ),
+
+    UNIQUE (
+        team_id,
+        provider
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_sources_team
+    ON team_sources(team_id);
+
+
+-- =========================================================
+-- UPDATED_AT TRIGGERS
+-- =========================================================
+
+DROP TRIGGER IF EXISTS competition_sources_updated_at
+    ON competition_sources;
+
+CREATE TRIGGER competition_sources_updated_at
+BEFORE UPDATE ON competition_sources
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+
+DROP TRIGGER IF EXISTS season_sources_updated_at
+    ON season_sources;
+
+CREATE TRIGGER season_sources_updated_at
+BEFORE UPDATE ON season_sources
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+
+DROP TRIGGER IF EXISTS team_sources_updated_at
+    ON team_sources;
+
+CREATE TRIGGER team_sources_updated_at
+BEFORE UPDATE ON team_sources
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
