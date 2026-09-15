@@ -11,7 +11,9 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(
+    __name__
+)
 
 
 app = Flask(__name__)
@@ -27,15 +29,16 @@ aggregator = CricketAggregator(config)
 def initialize_database():
     try:
         database = Database()
-        database.initialize_schema("schema.sql")
+
+        database.initialize_schema(
+            "schema.sql"
+        )
 
         logger.info(
             "PostgreSQL schema initialized successfully."
         )
 
     except Exception as exc:
-        # Do not crash the whole web service if the database
-        # is temporarily unavailable.
         logger.exception(
             "Database initialization failed: %s",
             exc,
@@ -57,7 +60,7 @@ def home():
 
 
 # =========================================================
-# NORMAL MATCH FEED
+# MATCH FEED
 # =========================================================
 
 @app.get("/api/matches")
@@ -102,25 +105,55 @@ def match_details_api(
 
 
 # =========================================================
-# HEALTH CHECK
+# HEALTH + DATABASE CHECK
 # =========================================================
 
 @app.get("/health")
 def health():
-    database_status = "not_checked"
+
+    required_tables = [
+        "competitions",
+        "competition_aliases",
+        "seasons",
+        "teams",
+        "team_aliases",
+        "venues",
+        "matches",
+        "match_scores",
+    ]
+
+    found_tables = []
+
+    database_status = "error"
 
     try:
         database = Database()
 
         result = database.execute(
-            "SELECT 1;",
+            """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+            AND table_name = ANY(%s)
+            ORDER BY table_name;
+            """,
+            (
+                required_tables,
+            ),
             fetch=True,
         )
 
-        if result:
-            database_status = "ok"
-        else:
-            database_status = "error"
+        found_tables = [
+            row[0]
+            for row in result
+        ]
+
+        database_status = (
+            "ok"
+            if len(found_tables)
+            == len(required_tables)
+            else "incomplete"
+        )
 
     except Exception as exc:
         logger.exception(
@@ -128,13 +161,14 @@ def health():
             exc,
         )
 
-        database_status = "error"
-
     return jsonify(
         {
             "ok": True,
             "service": "CrixData",
             "database": database_status,
+            "required_tables": required_tables,
+            "found_tables": found_tables,
+            "table_count": len(found_tables),
         }
     )
 
