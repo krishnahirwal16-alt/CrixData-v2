@@ -71,7 +71,54 @@ def initialize_database():
 
 
 initialize_database()
+# =========================================================
+# PROTECTED PROVIDER SYNC
+# =========================================================
 
+@app.get("/admin/sync")
+def admin_sync():
+
+    sync_token = request.args.get(
+        "token",
+        "",
+        type=str,
+    )
+
+    expected_token = config.sync_admin_token
+
+    if (
+        not expected_token
+        or sync_token != expected_token
+    ):
+        return jsonify(
+            {
+                "ok": False,
+                "error": "Unauthorized",
+            }
+        ), 401
+
+    try:
+        from services.sync import run_sync
+
+        result = run_sync()
+
+        return jsonify(
+            result
+        )
+
+    except Exception as exc:
+
+        logger.exception(
+            "Manual provider sync failed: %s",
+            exc,
+        )
+
+        return jsonify(
+            {
+                "ok": False,
+                "error": "Sync failed",
+            }
+        ), 500
 
 # =========================================================
 # HOME
