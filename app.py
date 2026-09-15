@@ -11,6 +11,7 @@ from config import AppConfig
 from database import Database
 from seed_data import seed_competitions
 from services.aggregator import CricketAggregator
+from services.search import CricketSearch
 
 
 # =========================================================
@@ -38,18 +39,17 @@ aggregator = CricketAggregator(
     config
 )
 
+search_service = CricketSearch()
+
 
 # =========================================================
 # DATABASE INITIALIZATION
 # =========================================================
 
 def initialize_database():
-    """
-    Ensure PostgreSQL schema exists and the competition
-    catalog is seeded.
-    """
 
     try:
+
         database = Database()
 
         database.initialize_schema(
@@ -103,7 +103,7 @@ def matches_api():
 
 
 # =========================================================
-# SEARCH
+# DATABASE-FIRST SEARCH
 # =========================================================
 
 @app.get("/api/search")
@@ -116,7 +116,7 @@ def search_api():
     ).strip()
 
     return jsonify(
-        aggregator.search(
+        search_service.search(
             query
         )
     )
@@ -150,37 +150,50 @@ def sync_ui():
     return """
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
+
     <meta charset="UTF-8">
+
     <meta
         name="viewport"
         content="width=device-width, initial-scale=1.0"
     >
+
     <title>CrixData Admin Sync</title>
 
     <style>
+
         body {
             font-family:
                 Arial,
                 sans-serif;
 
-            max-width: 700px;
+            max-width:
+                700px;
 
-            margin: 60px auto;
+            margin:
+                60px auto;
 
-            padding: 24px;
+            padding:
+                24px;
 
-            background: #f5f7fb;
+            background:
+                #f5f7fb;
 
-            color: #172033;
+            color:
+                #172033;
         }
 
         .card {
-            background: white;
+            background:
+                white;
 
-            padding: 28px;
+            padding:
+                28px;
 
-            border-radius: 16px;
+            border-radius:
+                16px;
 
             box-shadow:
                 0 10px 30px
@@ -188,61 +201,91 @@ def sync_ui():
         }
 
         input {
-            width: 100%;
+            width:
+                100%;
 
-            box-sizing: border-box;
+            box-sizing:
+                border-box;
 
-            padding: 14px;
+            padding:
+                14px;
 
-            margin: 12px 0;
+            margin:
+                12px 0;
 
             border:
                 1px solid #dbe2ea;
 
-            border-radius: 10px;
+            border-radius:
+                10px;
 
-            font-size: 15px;
+            font-size:
+                15px;
         }
 
         button {
             padding:
                 12px 18px;
 
-            border: 0;
+            border:
+                0;
 
-            border-radius: 10px;
+            border-radius:
+                10px;
 
-            cursor: pointer;
+            cursor:
+                pointer;
 
-            font-weight: 700;
+            font-weight:
+                700;
         }
 
         #run {
-            background: #1476c6;
+            background:
+                #1476c6;
 
-            color: white;
+            color:
+                white;
+        }
+
+        #run:disabled {
+            opacity:
+                0.6;
+
+            cursor:
+                wait;
         }
 
         #output {
-            margin-top: 20px;
+            margin-top:
+                20px;
 
-            padding: 16px;
+            padding:
+                16px;
 
-            background: #f8fafc;
+            background:
+                #f8fafc;
 
-            border-radius: 10px;
+            border-radius:
+                10px;
 
-            white-space: pre-wrap;
+            white-space:
+                pre-wrap;
 
-            overflow-wrap: anywhere;
+            overflow-wrap:
+                anywhere;
         }
 
         .warning {
-            color: #a15c00;
+            color:
+                #a15c00;
 
-            font-size: 14px;
+            font-size:
+                14px;
         }
+
     </style>
+
 </head>
 
 <body>
@@ -320,11 +363,13 @@ button.addEventListener(
                 await fetch(
                     "/admin/sync",
                     {
-                        method: "POST",
+                        method:
+                            "POST",
 
                         headers: {
                             "X-Sync-Token":
                                 token,
+
                             "Accept":
                                 "application/json",
                         },
@@ -359,6 +404,7 @@ button.addEventListener(
 </script>
 
 </body>
+
 </html>
 """
 
@@ -413,7 +459,8 @@ def admin_sync():
         return jsonify(
             {
                 "ok": False,
-                "error": "Sync failed",
+                "error":
+                    "Sync failed",
             }
         ), 500
 
@@ -450,12 +497,16 @@ def health():
 
         database = Database()
 
+        # ---------------------------------------------
+        # Required tables
+        # ---------------------------------------------
+
         table_result = database.execute(
             """
             SELECT table_name
             FROM information_schema.tables
             WHERE table_schema = 'public'
-            AND table_name = ANY(%s)
+              AND table_name = ANY(%s)
             ORDER BY table_name;
             """,
             (
@@ -468,6 +519,10 @@ def health():
             row[0]
             for row in table_result
         ]
+
+        # ---------------------------------------------
+        # Competition count
+        # ---------------------------------------------
 
         competition_result = database.execute(
             """
@@ -483,6 +538,10 @@ def health():
                 competition_result[0][0]
             )
 
+        # ---------------------------------------------
+        # Alias count
+        # ---------------------------------------------
+
         alias_result = database.execute(
             """
             SELECT COUNT(*)
@@ -496,6 +555,10 @@ def health():
             alias_count = (
                 alias_result[0][0]
             )
+
+        # ---------------------------------------------
+        # Overall status
+        # ---------------------------------------------
 
         database_status = (
             "ok"
@@ -513,7 +576,8 @@ def health():
 
     return jsonify(
         {
-            "ok": True,
+            "ok":
+                True,
 
             "service":
                 "CrixData",
@@ -547,10 +611,8 @@ if __name__ == "__main__":
 
     app.run(
         host="0.0.0.0",
-
         port=int(
             config.port
         ),
-
         debug=False,
     )
