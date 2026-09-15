@@ -40,17 +40,13 @@ aggregator = CricketAggregator(
 
 def initialize_database():
     """
-    Initialize the PostgreSQL schema and seed the
-    centralized competition catalog.
-
-    Both operations are designed to be safe to run
-    repeatedly.
+    Ensure the PostgreSQL schema exists and the centralized
+    competition catalog is seeded.
     """
 
     try:
         database = Database()
 
-        # Create/update required tables.
         database.initialize_schema(
             "schema.sql"
         )
@@ -59,7 +55,6 @@ def initialize_database():
             "PostgreSQL schema initialized."
         )
 
-        # Insert competitions + aliases.
         seeded = seed_competitions()
 
         logger.info(
@@ -154,6 +149,9 @@ def health():
         "venues",
         "matches",
         "match_scores",
+        "competition_sources",
+        "season_sources",
+        "team_sources",
     ]
 
     found_tables = []
@@ -168,7 +166,7 @@ def health():
         database = Database()
 
         # ---------------------------------------------
-        # Check required tables
+        # Check all required tables
         # ---------------------------------------------
 
         table_result = database.execute(
@@ -191,7 +189,7 @@ def health():
         ]
 
         # ---------------------------------------------
-        # Check competition catalog
+        # Competition count
         # ---------------------------------------------
 
         competition_result = database.execute(
@@ -208,7 +206,7 @@ def health():
             )
 
         # ---------------------------------------------
-        # Check alias catalog
+        # Alias count
         # ---------------------------------------------
 
         alias_result = database.execute(
@@ -225,7 +223,7 @@ def health():
             )
 
         # ---------------------------------------------
-        # Overall database status
+        # Database status
         # ---------------------------------------------
 
         database_status = (
@@ -245,9 +243,12 @@ def health():
     return jsonify(
         {
             "ok": True,
-            "service": "CrixData",
 
-            "database": database_status,
+            "service":
+                "CrixData",
+
+            "database":
+                database_status,
 
             "required_tables":
                 required_tables,
